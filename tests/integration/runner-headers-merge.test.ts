@@ -174,6 +174,27 @@ describe('PR4 header merge (integration)', { timeout: 15_000 }, () => {
     expect(captured!.headers.authorization).not.toContain('attacker-supplied');
   });
 
+  it('operator-supplied lowercase authorization in extraHeaders CANNOT clobber (Codex pass-2 PR4-009)', async () => {
+    // The original spread-order trick would leave both 'authorization'
+    // (operator, lowercase) and 'Authorization' (runner, capital) in the
+    // headers object as DISTINCT keys, and node:fetch would send both on
+    // the wire. sanitizeExtraHeaders in callLlmOnce strips reserved-name
+    // collisions case-insensitively before the spread.
+    await callLlmWithTools(
+      [{ role: 'user', content: 'hi' }],
+      baseOpts(endpoint, busPaths, {
+        extraHeaders: { 'authorization': 'Bearer attacker-supplied' },
+      }),
+    );
+    expect(captured!.headers.authorization).toBe('Bearer test-secret-from-env-do-not-leak-1234567890');
+    expect(captured!.headers.authorization).not.toContain('attacker-supplied');
+    // Verify node:fetch did NOT send two header lines.
+    const authLineCount = captured!.rawHeaders
+      .filter((h, i) => i % 2 === 0 && h.toLowerCase() === 'authorization')
+      .length;
+    expect(authLineCount).toBe(1);
+  });
+
   it('operator-supplied Content-Type in extraHeaders CANNOT clobber the runner default', async () => {
     await callLlmWithTools(
       [{ role: 'user', content: 'hi' }],
@@ -182,6 +203,20 @@ describe('PR4 header merge (integration)', { timeout: 15_000 }, () => {
       }),
     );
     expect(captured!.headers['content-type']).toBe('application/json');
+  });
+
+  it('operator-supplied lowercase content-type in extraHeaders CANNOT clobber (Codex pass-2 PR4-009)', async () => {
+    await callLlmWithTools(
+      [{ role: 'user', content: 'hi' }],
+      baseOpts(endpoint, busPaths, {
+        extraHeaders: { 'content-type': 'text/plain' },
+      }),
+    );
+    expect(captured!.headers['content-type']).toBe('application/json');
+    const ctLineCount = captured!.rawHeaders
+      .filter((h, i) => i % 2 === 0 && h.toLowerCase() === 'content-type')
+      .length;
+    expect(ctLineCount).toBe(1);
   });
 
   it('on 401 with the live key echoed in the body, the thrown Error has the key REDACTED', async () => {

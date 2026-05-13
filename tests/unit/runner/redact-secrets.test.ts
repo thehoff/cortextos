@@ -50,11 +50,13 @@ describe('redactSecrets', () => {
     expect(redactSecrets(text, undefined)).toBe(text);
   });
 
-  it('does not redact short apiKey values (< 8 chars) to avoid accidental matches', () => {
-    // An operator pointing api_key_env at "test" during smoke testing
-    // should not see every "test" in their error body get redacted.
-    const text = 'The test value was rejected';
-    expect(redactSecrets(text, 'test')).toBe('The test value was rejected');
+  it('redacts even short apiKey values (Codex pass-2 PR4-011)', () => {
+    // Pre-PR4-011, sub-8-char keys were skipped on the theory that short
+    // values were test placeholders. But a real 7-char key committed
+    // by accident is still a secret, and the false-positive cost of
+    // redacting a common short token in an error body is bounded.
+    const text = 'The sk-test value was rejected';
+    expect(redactSecrets(text, 'sk-test')).toBe('The ***REDACTED*** value was rejected');
   });
 
   it('preserves the rest of the response body for debugging', () => {

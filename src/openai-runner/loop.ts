@@ -66,6 +66,28 @@ interface AssistantMessage {
 const TOOLS_UNSUPPORTED_RE = /tool|function|unsupported/i;
 const CONTEXT_LENGTH_RE = /context.?length|too.?long|too many tokens|maximum context/i;
 const BEARER_TOKEN_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
+const HTTP_RESERVED_HEADER_NAMES_LOWER = new Set(['authorization', 'content-type']);
+
+/**
+ * Defense-in-depth: strip any extraHeaders key whose lowercased form
+ * collides with a runner-reserved header name. validateConfig already
+ * rejects these at the config boundary, but tests or future callers
+ * can pass extraHeaders directly into callLlmOnce — in which case the
+ * spread-order trick is insufficient because node:fetch treats
+ * `authorization` (lowercase) and `Authorization` as DISTINCT keys
+ * and sends both on the wire, letting the operator value shadow the
+ * runner-set bearer token (Codex pass-2 PR4-009).
+ */
+function sanitizeExtraHeaders(extra: Record<string, string> | undefined): Record<string, string> {
+  if (!extra) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(extra)) {
+    if (!HTTP_RESERVED_HEADER_NAMES_LOWER.has(k.toLowerCase())) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 /**
  * Strip the resolved API key + any Bearer token pattern from a piece of
@@ -77,13 +99,16 @@ const BEARER_TOKEN_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
  * secret sourced from the org-level secrets.env — leaking it via stderr
  * would defeat the purpose of moving it out of config.json.
  *
- * The 8-character floor on the api-key substitution avoids redacting
- * accidentally-common short strings if an operator points api_key_env
- * at a placeholder value during smoke tests.
+ * Per Codex pass-2 PR4-011, every non-empty key is redacted regardless
+ * of length: short keys are typically test placeholders, but a 7-char
+ * real key (or any short literal accidentally committed to config.json)
+ * should be scrubbed from error output too. The cost is one extra
+ * `split` per error path; the upside is no length-based exception
+ * for an operator to forget about.
  */
 export function redactSecrets(text: string, apiKey: string | undefined): string {
   let out = text;
-  if (apiKey && apiKey.length >= 8) {
+  if (apiKey && apiKey.length > 0) {
     out = out.split(apiKey).join('***REDACTED***');
   }
   out = out.replace(BEARER_TOKEN_RE, 'Bearer ***REDACTED***');
@@ -120,12 +145,15 @@ async function callLlmOnce(
     const r = await fetch(`${opts.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: {
-        // Operator/provider headers spread first so the runner's reserved
-        // headers below cannot be overridden at the HTTP boundary. The
-        // validateConfig reserved-name check (§5.2 of PLAN.md) is a layer
-        // of defense-in-depth above this. Both must be wrong for a
-        // clobber to occur.
-        ...(opts.extraHeaders ?? {}),
+        // sanitizeExtraHeaders drops any key that collides with a reserved
+        // name case-insensitively. Without that pass, an operator-supplied
+        // `authorization` (lowercase) would coexist with the runner-set
+        // `Authorization` (capital A) in the headers object — node:fetch
+        // sends both on the wire and many servers honour the first one,
+        // letting the operator value shadow the runner-set bearer
+        // (Codex pass-2 PR4-009). validateConfig blocks this at the
+        // config layer; this is the HTTP-boundary guarantee.
+        ...sanitizeExtraHeaders(opts.extraHeaders),
         'Content-Type': 'application/json',
         ...(opts.apiKey ? { 'Authorization': `Bearer ${opts.apiKey}` } : {}),
       },

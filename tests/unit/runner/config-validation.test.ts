@@ -194,15 +194,44 @@ describe('runner config validation', () => {
         expect(() => validateConfig({
           endpoint: 'http://x', model: 'm',
           headers: { 'X-Test': 'ok\r\nInjected: x' },
-        })).toThrow(/CR.*LF.*NUL|headers/);
+        })).toThrow(/headers/);
         expect(() => validateConfig({
           endpoint: 'http://x', model: 'm',
           headers: { 'X-Test': 'ok\nInjected' },
-        })).toThrow(/CR.*LF.*NUL|headers/);
+        })).toThrow(/headers/);
         expect(() => validateConfig({
           endpoint: 'http://x', model: 'm',
           headers: { 'X-Test': 'ok\x00null' },
-        })).toThrow(/CR.*LF.*NUL|headers/);
+        })).toThrow(/headers/);
+      });
+      it('rejects non-printable ASCII and high bytes in header values (Codex pass-2 PR4-010)', () => {
+        // Undici's native fetch throws TypeError for any byte outside
+        // HTAB + 0x20-0x7E. Catch at boot rather than crashing inside
+        // the message loop on first LLM call.
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'a\x01b' },          // SOH
+        })).toThrow(/HTAB|printable|headers/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'a\x7fb' },          // DEL
+        })).toThrow(/HTAB|printable|headers/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'a\x80b' },          // 0x80
+        })).toThrow(/HTAB|printable|headers/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'cortextös' },  // ö (non-ASCII)
+        })).toThrow(/HTAB|printable|headers/);
+      });
+      it('accepts HTAB and printable ASCII in header values', () => {
+        // HTAB (0x09) and SP (0x20) are RFC 7230 field-value WSP; visible
+        // ASCII (0x21-0x7E) is the VCHAR set.
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Tab': 'one\ttwo', 'X-Sp': 'one two', 'X-Vchar': 'normal-text+/=' },
+        })).not.toThrow();
       });
       it('rejects bad header key shapes', () => {
         expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: { 'X Bad': 'v' } })).toThrow(/headers/);
