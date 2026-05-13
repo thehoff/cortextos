@@ -99,6 +99,91 @@ The runner appends `/v1/chat/completions` to whatever you put in
 If the path lands at `<your-endpoint>/v1/chat/completions` you're
 correctly configured.
 
+## MCP server tools
+
+The openai-compatible runtime can spawn MCP (Model Context Protocol)
+servers per-agent and expose their tools to the LLM alongside the
+builtins. Each agent owns its own subprocess(es); MCP servers do NOT
+inherit secrets from the runner by default.
+
+### Configure
+
+Add `mcp_servers` to `config.json`:
+
+```json
+{
+  "mcp_servers": [
+    {
+      "name": "time-oracle",
+      "command": "node",
+      "args": ["./mcp-servers/time-oracle/dist/index.js"],
+      "tool_timeout_sec": 30
+    }
+  ],
+  "mcp_boot_timeout_sec": 30,
+  "mcp_tool_timeout_sec": 30,
+  "tools": ["mcp__time_oracle__now", "get_current_time"]
+}
+```
+
+The CLI manages this for you:
+
+```
+cortextos init-mcp time-oracle              # scaffolds mcp-servers/time-oracle/
+cortextos add-mcp time-oracle --agent <agent-name>
+```
+
+### Field reference
+
+- `mcp_servers[].name` — kebab-lowercase tag. Tools from this server
+  appear to the LLM as `mcp__<server_with_underscores>__<tool>`
+  (hyphens in the server name become underscores in the qualified
+  tool name, e.g. `time-oracle` → `mcp__time_oracle__*`).
+- `mcp_servers[].command`, `args`, `cwd` — subprocess invocation.
+- `mcp_servers[].env` — extra env vars merged into the subprocess.
+  Values matching `$VAR_NAME` resolve from the runner's environment
+  at boot; the resolved value is tracked as a secret and redacted
+  from error messages.
+- `mcp_servers[].env_inherit` — when `true`, the subprocess inherits
+  the runner's full env. **Default is `false`** so secrets like
+  `OPENROUTER_API_KEY` don't reach community MCP servers by accident.
+  A minimal allowlist (`PATH`, `HOME`, `USER`, `LANG`, `NODE_ENV`) is
+  always inherited so basic subprocess execution works.
+- `mcp_servers[].tool_timeout_sec` — per-server tool-call timeout.
+- `mcp_boot_timeout_sec` — total parallel-boot budget (default 30).
+  If any server doesn't complete `initialize` and `tools/list` within
+  this window, the agent fails to start with a FATAL error naming the
+  slow server, and any already-spawned children are torn down.
+- `mcp_tool_timeout_sec` — default per-tool timeout for MCP tools
+  (default 30). Vector DBs and SQL gateways are slow; the 10s
+  builtin default would silently truncate too many calls.
+
+### Tool dispatch
+
+When `tools` is absent, the agent gets ALL builtins + ALL MCP tools.
+When `tools` is set, list each one explicitly:
+
+```json
+"tools": ["get_current_time", "mcp__time_oracle__now"]
+```
+
+Tool-name typos are caught at boot via phased validation:
+- Builtin name typo → fail at config load (PR3 semantics preserved).
+- `mcp__<server>__*` references an undeclared server → fail at config load.
+- `mcp__<server>__<typo>` where the server is real but the tool name
+  doesn't exist → fail at boot, after the MCP servers come up.
+
+### Result-shape contract
+
+MCP tools must return text content blocks. Image, audio, or resource
+blocks cause the tool call to fail with a stable sanitized message;
+PR5 is text-tools only.
+
+### Wire-protocol example
+
+See `examples/mcp-server/` in the cortextOS repo for a minimal MCP
+server (with `now` and `greet` tools) you can build on.
+
 ### When the key is wrong
 
 On HTTP 401 or 403 from the LLM endpoint, the agent replies to the

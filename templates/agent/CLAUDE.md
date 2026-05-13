@@ -127,6 +127,8 @@ cortextos bus send-message rag-1 normal "[memory: thread-42] What was that earli
 
 **What openai-compatible specialists CANNOT do:** multi-step reasoning beyond a single LLM call, Claude/codex skills, Telegram. For multi-step work, decompose into single questions and dispatch each separately.
 
+**MCP-equipped specialists.** Some openai-compatible specialists boot one or more MCP (Model Context Protocol) servers at startup — typically databases, search indexes, or external API gateways. The specialist can call those tools internally during its single LLM turn; from your perspective the dispatch contract is unchanged. If you need a richer integration (e.g. a SQL gateway agent), look at `templates/agent-thin/AGENTS.md` for the configuration pattern.
+
 ---
 
 ## Crons
