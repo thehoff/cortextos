@@ -18,6 +18,13 @@ export interface LlmCallOptions {
   requestTimeoutMs: number;
   /** Cache reference — once a model rejects `tools` we don't re-send it for the lifetime of the runner. */
   toolsSupported: { value: boolean };
+  /**
+   * Extra HTTP headers merged into every /v1/chat/completions request.
+   * Spread FIRST in the fetch call, so the runner's reserved headers
+   * (Content-Type, Authorization) always win at the HTTP boundary —
+   * validateConfig's reserved-name guard is defense-in-depth above that.
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 export interface ToolLoopOptions extends LlmCallOptions {
@@ -113,6 +120,12 @@ async function callLlmOnce(
     const r = await fetch(`${opts.endpoint}/v1/chat/completions`, {
       method: 'POST',
       headers: {
+        // Operator/provider headers spread first so the runner's reserved
+        // headers below cannot be overridden at the HTTP boundary. The
+        // validateConfig reserved-name check (§5.2 of PLAN.md) is a layer
+        // of defense-in-depth above this. Both must be wrong for a
+        // clobber to occur.
+        ...(opts.extraHeaders ?? {}),
         'Content-Type': 'application/json',
         ...(opts.apiKey ? { 'Authorization': `Bearer ${opts.apiKey}` } : {}),
       },

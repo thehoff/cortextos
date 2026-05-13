@@ -195,6 +195,45 @@ export function validateConfig(raw: unknown): RunnerConfig {
  * Read once at boot; rotating the secret requires restarting the agent.
  * Documented in templates/agent-thin/AGENTS.md.
  */
+/**
+ * Materialize the effective HTTP headers to send on every LLM request.
+ * Provider-specific defaults (currently: provider="openrouter" injects
+ * HTTP-Referer + X-Title for leaderboard attribution) are applied first;
+ * the operator's `headers` from config.json are merged on top with
+ * case-insensitive dedup, so an operator's lowercase `http-referer`
+ * correctly replaces our defaulted `HTTP-Referer` rather than producing
+ * two header lines.
+ *
+ * The reserved-name guard in validateConfig prevents the operator from
+ * setting Content-Type or Authorization here; loop.ts's spread order
+ * enforces it again at the HTTP boundary as defense-in-depth.
+ */
+export function resolveExtraHeaders(cfg: RunnerConfig): Record<string, string> {
+  const seenLower = new Map<string, string>();
+  const result: Record<string, string> = {};
+
+  const setHeader = (key: string, value: string): void => {
+    const lc = key.toLowerCase();
+    const existing = seenLower.get(lc);
+    if (existing !== undefined) {
+      delete result[existing];
+    }
+    seenLower.set(lc, key);
+    result[key] = value;
+  };
+
+  if (cfg.provider === 'openrouter') {
+    setHeader('HTTP-Referer', 'https://github.com/grandamenium/cortextos');
+    setHeader('X-Title', 'cortextOS');
+  }
+
+  for (const [k, v] of Object.entries(cfg.headers ?? {})) {
+    setHeader(k, v);
+  }
+
+  return result;
+}
+
 export function resolveApiKey(cfg: RunnerConfig): string | undefined {
   if (cfg.api_key_env !== undefined) {
     const v = process.env[cfg.api_key_env];
@@ -381,6 +420,7 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
 
     const endpoint = cfg.endpoint.replace(/\/$/, '');
     const model = cfg.model;
+    const extraHeaders = resolveExtraHeaders(cfg);
     const maxTokens = cfg.max_tokens ?? 2000;
     const temperature = cfg.temperature ?? 0.2;
     const heartbeatMs = (cfg.heartbeat_interval_sec ?? 60) * 1000;
@@ -453,6 +493,7 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     safeUpdateHeartbeat('idle', '');
     safeLogEvent('milestone', 'agent_online', 'info', {
       agent: agentName, model, endpoint, tools: enabledTools,
+      ...(cfg.provider ? { provider: cfg.provider } : {}),
     });
 
     process.stdout.write('[openai-runner] READY\n');
@@ -480,6 +521,7 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
             {
               endpoint, apiKey, model, maxTokens, temperature, requestTimeoutMs,
               toolsSupported,
+              extraHeaders,
               enabledToolNames: enabledTools,
               defaultToolTimeoutMs,
               toolTimeoutsMs,
