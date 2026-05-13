@@ -33,7 +33,7 @@ describe('writeMcpScaffold', () => {
     writeMcpScaffold({ serverName: 'data-oracle', destDir: dest });
     const pkg = JSON.parse(readFileSync(join(dest, 'package.json'), 'utf-8'));
     expect(pkg.name).toBe('mcp-server-data-oracle');
-    expect(pkg.dependencies['@modelcontextprotocol/sdk']).toMatch(/\^1\./);
+    expect(pkg.dependencies['@modelcontextprotocol/sdk']).toBe('1.29.0');
     const indexTs = readFileSync(join(dest, 'src', 'index.ts'), 'utf-8');
     expect(indexTs).toContain("name: 'data-oracle'");
     const readme = readFileSync(join(dest, 'README.md'), 'utf-8');

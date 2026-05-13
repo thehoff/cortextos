@@ -45,7 +45,7 @@ function renderPackageJson(serverName: string): string {
       dev: 'tsx src/index.ts',
     },
     dependencies: {
-      '@modelcontextprotocol/sdk': '^1.29.0',
+      '@modelcontextprotocol/sdk': '1.29.0',
     },
     devDependencies: {
       '@types/node': '^20.0.0',

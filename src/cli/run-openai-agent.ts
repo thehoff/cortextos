@@ -227,8 +227,14 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     const heartbeatMs = (cfg.heartbeat_interval_sec ?? 60) * 1000;
     const requestTimeoutMs = (cfg.request_timeout_sec ?? 120) * 1000;
 
-    // Tool config
-    const enabledTools = cfg.tools ?? [];
+    // Tool config. Per PLAN.md §8.2 (Codex pass-2 PR5-014):
+    //   - cfg.tools undefined  → ALL builtins + ALL MCP tools enabled
+    //   - cfg.tools: []        → no tools at all
+    //   - cfg.tools: [...]     → exactly the listed tools
+    // The all-enabled materialization happens AFTER MCP boot (it needs the
+    // manager's discovered tools), so the variable is `let` here.
+    let enabledTools: string[] = cfg.tools === undefined ? [] : cfg.tools;
+    const enabledToolsAbsent = cfg.tools === undefined;
     const maxIterations = cfg.tool_loop_max_iterations ?? 5;
     // Codex P3-2: keep undefined when no global override is set so the loop's
     // precedence chain (per-tool > global > registry.defaultTimeoutMs > 10s)
@@ -307,7 +313,10 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // PR5: boot MCP servers between config-load and READY. Failures FATAL.
     if (cfg.mcp_servers && cfg.mcp_servers.length > 0) {
       const mcpBootTimeoutMs = (cfg.mcp_boot_timeout_sec ?? 30) * 1000;
-      const mcpDefaultToolTimeoutMs = (cfg.mcp_tool_timeout_sec ?? 30) * 1000;
+      // Codex pass-2 PR5-016: fold cfg.tool_timeout_sec into the chain so an
+      // operator who set a global per-tool timeout in PR3 actually affects
+      // MCP tools too.
+      const mcpDefaultToolTimeoutMs = (cfg.mcp_tool_timeout_sec ?? cfg.tool_timeout_sec ?? 30) * 1000;
       try {
         mcpManager = await bootMcpManager({
           specs: cfg.mcp_servers,
@@ -328,6 +337,11 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
               `Available MCP tools: ${[...mcpManager.routes.keys()].join(', ') || '(none)'}`,
             );
           }
+        }
+        // PR5-014 (HIGH): absent `tools` means ALL enabled. Materialize the
+        // full set after MCP boot now that the route table is final.
+        if (enabledToolsAbsent) {
+          enabledTools = [...Object.keys(TOOL_REGISTRY), ...mcpManager.routes.keys()];
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

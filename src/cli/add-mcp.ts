@@ -73,17 +73,34 @@ export const addMcpCommand = new Command('add-mcp')
     }
 
     const serverDir = join(projectRoot, 'mcp-servers', serverName);
-    if (!existsSync(serverDir) && !options.serverPath) {
-      process.stderr.write(
-        chalk.yellow(`warning: ${serverDir} does not exist — did you run \`cortextos init-mcp ${serverName}\`?\n`) +
-        `Continuing; the agent will fail to boot until the server is built.\n`,
-      );
+    // Codex pass-2 PR5-017: resolve --server-path to an absolute path so
+    // it doesn't get re-rooted against the agent's cwd at boot time.
+    const serverArgPath = options.serverPath
+      ? resolve(options.serverPath)
+      : join(serverDir, 'dist', 'index.js');
+
+    if (!options.serverPath) {
+      if (!existsSync(serverDir)) {
+        process.stderr.write(
+          chalk.yellow(`warning: ${serverDir} does not exist — did you run \`cortextos init-mcp ${serverName}\`?\n`) +
+          `Continuing; the agent will fail to boot until the server is built.\n`,
+        );
+      } else if (!existsSync(serverArgPath)) {
+        // Codex pass-2 PR5-018: the scaffold exists but hasn't been built.
+        // This is the most common operator path and the failure mode is
+        // an opaque ENOENT from node:child_process at agent boot.
+        process.stderr.write(
+          chalk.yellow(`warning: ${serverArgPath} does not exist — the MCP server has not been built.\n`) +
+          `Build it before enabling the agent:\n` +
+          chalk.cyan(`  cd ${serverDir} && npm install && npm run build\n`),
+        );
+      }
     }
 
     const serverEntry: McpServerSpec = {
       name: serverName,
       command: 'node',
-      args: [options.serverPath ?? join(serverDir, 'dist', 'index.js')],
+      args: [serverArgPath],
       ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
     };
 

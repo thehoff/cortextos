@@ -87,17 +87,28 @@ export interface ConnectOptions {
   bootTimeoutMs: number;
 }
 
+export interface ConnectInProgress {
+  /** Promise that resolves to the connected client, or rejects on any failure. */
+  ready: Promise<ConnectedMcpClient>;
+  /** Idempotent close. Safe to call concurrently with `ready` resolution (Codex pass-2 PR5-013). */
+  cleanup: () => Promise<void>;
+}
+
 /**
- * Spawn the MCP server subprocess + complete handshake + list tools.
+ * Begin an MCP connection. Returns SYNCHRONOUSLY with both a Promise
+ * for the connected client AND a cleanup handle, so callers can
+ * register the cleanup BEFORE awaiting the connect. This closes the
+ * Codex pass-2 PR5-013 leak path where a shutdown call during the
+ * in-flight handshake had nothing to close.
  *
- * Atomicity contract: returns a ConnectedMcpClient on success; on
- * any failure, the function closes its own transport before rejecting
- * so no zombie process remains.
+ * Atomicity: if connect/handshake/listTools fails for any reason, the
+ * helper invokes cleanup itself before rejecting, so callers can't
+ * forget. The exposed cleanup is idempotent.
  */
-export async function connectMcpServer(
+export function beginMcpConnect(
   spec: McpServerSpec,
   opts: ConnectOptions,
-): Promise<ConnectedMcpClient> {
+): ConnectInProgress {
   const transport = new StdioClientTransport({
     command: spec.command,
     args: spec.args ?? [],
@@ -117,7 +128,8 @@ export async function connectMcpServer(
     try { await client.close(); } catch { /* swallow — already errored */ }
   };
 
-  try {
+  const ready = (async (): Promise<ConnectedMcpClient> => {
+    try {
     // Race connect+handshake+listTools against the boot timeout. The
     // bootTimeoutMs applies as one budget for the whole sequence so
     // a server that handshakes fast but then hangs on listTools still
@@ -191,4 +203,19 @@ export async function connectMcpServer(
     await cleanup();
     throw err;
   }
+  })();
+
+  return { ready, cleanup };
+}
+
+/**
+ * Back-compat convenience wrapper: awaits ready and returns the client.
+ * Existing tests call this; the manager uses beginMcpConnect directly so
+ * it can register cleanup synchronously.
+ */
+export async function connectMcpServer(
+  spec: McpServerSpec,
+  opts: ConnectOptions,
+): Promise<ConnectedMcpClient> {
+  return beginMcpConnect(spec, opts).ready;
 }

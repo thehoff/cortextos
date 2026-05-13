@@ -14,7 +14,7 @@
  * BEFORE awaiting the connect handshake, so a shutdown call at any
  * point during boot has access to every spawned child.
  */
-import { connectMcpServer, resolveMcpServerEnv } from './client.js';
+import { beginMcpConnect, resolveMcpServerEnv } from './client.js';
 import type { ConnectedMcpClient, McpServerSpec, McpToolDescriptor, McpRoute } from './types.js';
 
 export interface McpManager {
@@ -113,19 +113,17 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
   const results = await Promise.allSettled(opts.specs.map(async (spec) => {
     const { env, secrets: specSecrets } = resolveMcpServerEnv(spec, opts.runnerEnv);
     for (const s of specSecrets) secrets.add(s);
-    // Register a placeholder cleanup BEFORE the connect, so a shutdown
-    // call mid-connect can attempt to close the partially-initialized
-    // child. The real cleanup function gets swapped in on success.
-    let activeCleanup: () => Promise<void> = async () => undefined;
-    const cleanupHandle = (): Promise<void> => activeCleanup();
-    childCleanups.push(cleanupHandle);
-
-    const client = await connectMcpServer(spec, {
+    // PR5-013 fix: register the REAL cleanup synchronously, BEFORE the
+    // connect await. beginMcpConnect returns the cleanup handle alongside
+    // the in-flight Promise. If shutdown() fires while the connect is
+    // still pending, the cleanup actually closes the transport.
+    const { ready, cleanup } = beginMcpConnect(spec, {
       env,
       cwd: spec.cwd ?? opts.cwd,
       bootTimeoutMs: opts.bootTimeoutMs,
     });
-    activeCleanup = client.disconnect.bind(client);
+    childCleanups.push(cleanup);
+    const client = await ready;
     return { spec, client };
   }));
 

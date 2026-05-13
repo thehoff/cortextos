@@ -112,10 +112,17 @@ function sanitizeExtraHeaders(extra: Record<string, string> | undefined): Record
  * `split` per error path; the upside is no length-based exception
  * for an operator to forget about.
  */
-export function redactSecrets(text: string, apiKey: string | undefined): string {
+export function redactSecrets(text: string, apiKey: string | undefined, extraSecrets?: Iterable<string>): string {
   let out = text;
   if (apiKey && apiKey.length > 0) {
     out = out.split(apiKey).join('***REDACTED***');
+  }
+  if (extraSecrets) {
+    for (const s of extraSecrets) {
+      if (s && s.length > 0) {
+        out = out.split(s).join('***REDACTED***');
+      }
+    }
   }
   out = out.replace(BEARER_TOKEN_RE, 'Bearer ***REDACTED***');
   return out;
@@ -303,8 +310,11 @@ export async function callLlmWithTools(
       let result: string;
       let status: 'success' | 'timeout' | 'error' | 'malformed_args' | 'unknown_tool';
 
-      const isMcp = name.startsWith(MCP_NAME_PREFIX);
-      const isKnownBuiltin = !isMcp && name in TOOL_REGISTRY;
+      // Codex pass-2 PR5-019: TOOL_REGISTRY lookups take precedence over the
+      // mcp__ prefix routing. No builtin currently uses that prefix, but the
+      // explicit ordering makes "future builtin shadows MCP" impossible.
+      const isKnownBuiltin = name in TOOL_REGISTRY;
+      const isMcp = !isKnownBuiltin && name.startsWith(MCP_NAME_PREFIX);
       const isKnownMcp = isMcp && opts.mcpManager?.routes.has(name) === true;
 
       if (!isKnownBuiltin && !isKnownMcp) {
@@ -346,7 +356,13 @@ export async function callLlmWithTools(
             status = result.startsWith('error:') ? 'error' : 'success';
           }
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          // Codex pass-2 PR5-015 (HIGH): MCP errors can echo $VAR-resolved
+          // secrets. Redact before the message flows into a tool message
+          // (visible to the LLM next turn) AND into the task_failed event.
+          const msg = isMcp
+            ? redactSecrets(rawMsg, opts.apiKey, opts.mcpManager?.secrets)
+            : redactSecrets(rawMsg, opts.apiKey);
           result = `error: ${msg}`;
           status = msg.includes('timeout') || msg.includes('timed out') ? 'timeout' : 'error';
         }

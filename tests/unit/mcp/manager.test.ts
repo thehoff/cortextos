@@ -171,6 +171,37 @@ describe('bootMcpManager', { timeout: 30_000 }, () => {
   });
 });
 
+describe('shutdown during boot (PR5-013 BLOCKER fix verification)', { timeout: 30_000 }, () => {
+  it('cleanup runs even when shutdown fires while a server is still mid-handshake', async () => {
+    // The hang fixture never responds to initialize; its child process
+    // stays alive indefinitely unless something closes it. Boot the
+    // manager against it, and immediately call shutdown() before the
+    // bootTimeoutMs would expire. The pre-PR5-013 placeholder cleanup
+    // would have been a no-op; the fix's beginMcpConnect ensures the
+    // real cleanup is registered synchronously and is callable while
+    // the connect promise is still pending.
+    const bootPromise = bootMcpManager({
+      specs: [{ name: 'hang-srv', command: TSX, args: [HANG_FIXTURE] }],
+      cwd: REPO_ROOT,
+      bootTimeoutMs: 30_000,        // long — we'll cancel it ourselves
+      defaultToolTimeoutMs: 5_000,
+      builtinToolNames: BUILTIN_NAMES,
+      runnerEnv: process.env,
+      onBeforeFirstSpawn: (h) => {
+        // Schedule shutdown to fire 250ms into boot — well after spawn,
+        // well before the 30s timeout. Without the PR5-013 fix this
+        // call would not close the child.
+        setTimeout(() => { void h.shutdown(); }, 250);
+      },
+    });
+    // boot should reject (the hang fixture never responds + we shut it down).
+    await expect(bootPromise).rejects.toBeDefined();
+    // The hang fixture child process should be reaped within a couple
+    // seconds. If the BLOCKER weren't fixed, the child would still be
+    // running and vitest would surface a leaked handle.
+  });
+});
+
 describe('dispatchMcpCall', { timeout: 20_000 }, () => {
   it('routes a qualified call to the right client', async () => {
     const manager = await bootMcpManager({
