@@ -15,6 +15,23 @@ import { resolvePaths } from '../utils/paths.js';
 type LogFn = (msg: string) => void;
 
 /**
+ * Runtimes the daemon can actually dispatch.
+ *
+ * Acts as a positive allowlist at the top of AgentProcess.start() — the
+ * single chokepoint for every spawn path (cold start, IPC start-agent, CLI
+ * `cortextos start`, crash auto-restart, session refresh). Anything not on
+ * the list is refused with a clear log message rather than silently falling
+ * through to AgentPTY (Claude default), which would happen at the dispatch
+ * ternary below given `AgentConfig.runtime` is type-optional.
+ *
+ * Adding a new runtime means: (1) add it here, (2) add a matching dispatch
+ * branch in the ternary, (3) add a matching stop branch where Hermes-specific
+ * stop handling lives. PR2 adds 'openai-compatible' alongside the
+ * OpenAICompatiblePTY dispatch.
+ */
+const DISPATCH_ALLOWLIST: readonly string[] = ['claude-code', 'codex-app-server', 'hermes'];
+
+/**
  * Manages a single agent's lifecycle.
  * Replaces agent-wrapper.sh for one agent.
  */
@@ -76,6 +93,18 @@ export class AgentProcess {
   async start(): Promise<void> {
     if (this.status === 'running') {
       this.log('Already running');
+      return;
+    }
+
+    // Dispatch-allowlist guard. AgentConfig.runtime is optional; legacy Claude
+    // agents on disk have no runtime field at all, so normalize to claude-code
+    // (preserves the pre-allowlist fall-through behaviour at the ternary
+    // below). Any runtime not on the allowlist is refused here — covers cold
+    // start, IPC start-agent, CLI `cortextos start`, crash auto-restart, and
+    // session refresh in one place.
+    const runtime = this.config.runtime ?? 'claude-code';
+    if (!DISPATCH_ALLOWLIST.includes(runtime)) {
+      this.log(`Refusing to dispatch agent ${this.name}: runtime "${runtime}" not in allowlist`);
       return;
     }
 

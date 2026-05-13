@@ -1,0 +1,13 @@
+{
+  "agent_name": "{{agent_name}}",
+  "runtime": "openai-compatible",
+  "enabled": false,
+  "endpoint": "http://localhost:8080",
+  "model": "your-model-name",
+  "startup_delay": 0,
+  "max_session_seconds": 255600,
+  "max_crashes_per_day": 10,
+  "working_directory": "",
+  "timezone": "",
+  "crons": []
+}

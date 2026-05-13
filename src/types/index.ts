@@ -185,8 +185,10 @@ export interface AgentConfig {
    * 'hermes' selects the HermesPTY spawn path (Python persistent REPL,
    * NousResearch/hermes-agent) with Hermes-specific bootstrap, session
    * continuity, and exit handling.
+   * 'openai-compatible' selects the OpenAICompatiblePTY spawn path (lightweight
+   * local-LLM specialist agent that talks to any OpenAI-compatible endpoint).
    */
-  runtime?: 'claude-code' | 'hermes' | 'codex-app-server';
+  runtime?: 'claude-code' | 'hermes' | 'codex-app-server' | 'openai-compatible';
   /**
    * Whether this agent runs a Telegram poller. Defaults to true when absent
    * (preserves existing behaviour). Set to false on specialist agents that
