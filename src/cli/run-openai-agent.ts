@@ -14,6 +14,12 @@ export interface RunnerConfig {
   endpoint: string;
   model: string;
   api_key?: string;
+  /** Name of a process.env variable holding the API key. Mutually exclusive with api_key. */
+  api_key_env?: string;
+  /** Extra HTTP headers merged into every /v1/chat/completions request. Cannot override Content-Type or Authorization. */
+  headers?: Record<string, string>;
+  /** Informational provider tag. Some values (e.g. "openrouter") trigger default headers. */
+  provider?: string;
   max_tokens?: number;
   temperature?: number;
   heartbeat_interval_sec?: number;
@@ -29,6 +35,11 @@ export interface RunnerConfig {
   /** Cap on bus_send_message calls per inbox message. Default 3. */
   tool_bus_send_budget?: number;
 }
+
+const ENV_VAR_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+const HTTP_HEADER_NAME_RE = /^[A-Za-z][A-Za-z0-9-]*$/;
+const PROVIDER_TAG_RE = /^[a-z][a-z0-9-]*$/;
+const RESERVED_HEADER_NAMES_LOWER = new Set(['content-type', 'authorization']);
 
 interface ParsedMessage {
   sender: string;
@@ -66,6 +77,52 @@ export function validateConfig(raw: unknown): RunnerConfig {
   }
   if (typeof c.model !== 'string' || !c.model) {
     throw new Error('config.json: "model" must be a non-empty string');
+  }
+  if (c.api_key !== undefined) {
+    if (typeof c.api_key !== 'string' || c.api_key.length === 0 || c.api_key.length > 512) {
+      throw new Error('config.json: "api_key" must be a non-empty string of length <= 512');
+    }
+  }
+  if (c.api_key_env !== undefined) {
+    if (typeof c.api_key_env !== 'string' || c.api_key_env.length === 0 || c.api_key_env.length > 64) {
+      throw new Error('config.json: "api_key_env" must be a non-empty string of length <= 64');
+    }
+    if (!ENV_VAR_NAME_RE.test(c.api_key_env)) {
+      throw new Error(`config.json: "api_key_env" must match /^[A-Z][A-Z0-9_]*$/ (got ${JSON.stringify(c.api_key_env)})`);
+    }
+  }
+  if (c.api_key !== undefined && c.api_key_env !== undefined) {
+    throw new Error('config.json: "api_key" and "api_key_env" are mutually exclusive; pick one');
+  }
+  if (c.headers !== undefined) {
+    if (typeof c.headers !== 'object' || c.headers === null || Array.isArray(c.headers)) {
+      throw new Error('config.json: "headers" must be an object of header-name → string');
+    }
+    for (const [k, v] of Object.entries(c.headers)) {
+      if (typeof k !== 'string' || k.length === 0 || k.length > 64) {
+        throw new Error(`config.json: headers key must be a string of length 1..64 (got ${JSON.stringify(k)})`);
+      }
+      if (!HTTP_HEADER_NAME_RE.test(k)) {
+        throw new Error(`config.json: headers key ${JSON.stringify(k)} must match /^[A-Za-z][A-Za-z0-9-]*$/`);
+      }
+      if (RESERVED_HEADER_NAMES_LOWER.has(k.toLowerCase())) {
+        throw new Error(`config.json: header ${JSON.stringify(k)} is reserved by the runner (Content-Type, Authorization)`);
+      }
+      if (typeof v !== 'string' || v.length === 0 || v.length > 512) {
+        throw new Error(`config.json: headers[${JSON.stringify(k)}] must be a non-empty string of length <= 512`);
+      }
+      if (/[\r\n\x00]/.test(v)) {
+        throw new Error(`config.json: headers[${JSON.stringify(k)}] must not contain CR, LF, or NUL`);
+      }
+    }
+  }
+  if (c.provider !== undefined) {
+    if (typeof c.provider !== 'string' || c.provider.length === 0 || c.provider.length > 32) {
+      throw new Error('config.json: "provider" must be a non-empty string of length <= 32');
+    }
+    if (!PROVIDER_TAG_RE.test(c.provider)) {
+      throw new Error(`config.json: "provider" must match /^[a-z][a-z0-9-]*$/ (got ${JSON.stringify(c.provider)})`);
+    }
   }
   if (c.max_tokens !== undefined && (typeof c.max_tokens !== 'number' || c.max_tokens < 1 || c.max_tokens > 100000)) {
     throw new Error('config.json: "max_tokens" must be a number in [1, 100000]');

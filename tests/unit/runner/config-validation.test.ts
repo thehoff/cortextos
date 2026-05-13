@@ -115,4 +115,178 @@ describe('runner config validation', () => {
       expect(() => validateConfig({ endpoint: 'http://x', model: 'm', temperature: 2 })).not.toThrow();
     });
   });
+
+  /**
+   * PR4 (provider polish): config schema for hosted-provider polish.
+   *
+   *   - api_key is now type-checked (was implicitly typed before).
+   *   - api_key_env names a process.env variable holding the key.
+   *   - api_key + api_key_env are mutually exclusive at config time.
+   *   - headers is an arbitrary {k: v} merged into LLM requests, but
+   *     Content-Type and Authorization are reserved by the runner.
+   *   - provider is an informational tag; some values (e.g. "openrouter")
+   *     also trigger default headers at runtime.
+   */
+  describe('PR4 provider polish', () => {
+    describe('api_key', () => {
+      it('rejects api_key that is not a string', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: 42 })).toThrow(/api_key/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: null })).toThrow(/api_key/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: [] })).toThrow(/api_key/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: {} })).toThrow(/api_key/);
+      });
+      it('rejects empty api_key', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: '' })).toThrow(/api_key/);
+      });
+      it('rejects api_key longer than 512 chars', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: 'x'.repeat(513) })).toThrow(/api_key/);
+      });
+      it('accepts a sensibly-shaped api_key', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key: 'sk-or-test-123' })).not.toThrow();
+      });
+    });
+
+    describe('api_key_env', () => {
+      it('accepts a POSIX env name', () => {
+        const cfg = validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: 'OPENROUTER_API_KEY' });
+        expect(cfg.api_key_env).toBe('OPENROUTER_API_KEY');
+      });
+      it('rejects a lowercased env name', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: 'openrouter_api_key' })).toThrow(/api_key_env/);
+      });
+      it('rejects an env name starting with a digit', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: '4KEY' })).toThrow(/api_key_env/);
+      });
+      it('rejects an empty env name', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: '' })).toThrow(/api_key_env/);
+      });
+      it('rejects an env name longer than 64 chars', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: 'A'.repeat(65) })).toThrow(/api_key_env/);
+      });
+      it('rejects non-string api_key_env', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', api_key_env: 42 })).toThrow(/api_key_env/);
+      });
+      it('rejects setting both api_key and api_key_env', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          api_key: 'sk-test', api_key_env: 'FOO_KEY',
+        })).toThrow(/mutually exclusive/);
+      });
+    });
+
+    describe('headers', () => {
+      it('accepts a simple headers map', () => {
+        const cfg = validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'HTTP-Referer': 'https://example', 'X-Title': 'app' },
+        });
+        expect(cfg.headers?.['HTTP-Referer']).toBe('https://example');
+      });
+      it('accepts an empty headers map', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: {} })).not.toThrow();
+      });
+      it('rejects non-object headers', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: 'oops' })).toThrow(/headers/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: ['a'] })).toThrow(/headers/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: null })).toThrow(/headers/);
+      });
+      it('rejects CR/LF/NUL in header values (CRLF injection guard)', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'ok\r\nInjected: x' },
+        })).toThrow(/CR.*LF.*NUL|headers/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'ok\nInjected' },
+        })).toThrow(/CR.*LF.*NUL|headers/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 'ok\x00null' },
+        })).toThrow(/CR.*LF.*NUL|headers/);
+      });
+      it('rejects bad header key shapes', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: { 'X Bad': 'v' } })).toThrow(/headers/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: { 'X-Bad\r': 'v' } })).toThrow(/headers/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', headers: { '': 'v' } })).toThrow(/headers/);
+      });
+      it('rejects reserved header names case-insensitively', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'Authorization': 'Bearer leaked' },
+        })).toThrow(/reserved/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'authorization': 'Bearer leaked' },
+        })).toThrow(/reserved/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'content-type': 'text/plain' },
+        })).toThrow(/reserved/);
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'Content-Type': 'text/plain' },
+        })).toThrow(/reserved/);
+      });
+      it('rejects header values longer than 512 chars', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Big': 'x'.repeat(513) },
+        })).toThrow(/headers/);
+      });
+      it('rejects empty header values', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Empty': '' },
+        })).toThrow(/headers/);
+      });
+      it('rejects non-string header values', () => {
+        expect(() => validateConfig({
+          endpoint: 'http://x', model: 'm',
+          headers: { 'X-Test': 42 },
+        })).toThrow(/headers/);
+      });
+    });
+
+    describe('provider', () => {
+      it('accepts kebab-lowercase provider tags', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'openrouter' })).not.toThrow();
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'local-llamacpp' })).not.toThrow();
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'vllm' })).not.toThrow();
+      });
+      it('rejects uppercase provider', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'OpenRouter' })).toThrow(/provider/);
+      });
+      it('rejects provider with space or underscore', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'open router' })).toThrow(/provider/);
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'together_ai' })).toThrow(/provider/);
+      });
+      it('rejects provider starting with a digit', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: '4ai' })).toThrow(/provider/);
+      });
+      it('rejects empty provider', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: '' })).toThrow(/provider/);
+      });
+      it('rejects provider longer than 32 chars', () => {
+        expect(() => validateConfig({ endpoint: 'http://x', model: 'm', provider: 'a'.repeat(33) })).toThrow(/provider/);
+      });
+    });
+
+    describe('full provider-polish config', () => {
+      it('accepts the full OpenRouter-style example', () => {
+        const cfg = validateConfig({
+          endpoint: 'https://openrouter.ai/api',
+          model: 'anthropic/claude-3.5-haiku',
+          api_key_env: 'OPENROUTER_API_KEY',
+          provider: 'openrouter',
+          headers: {
+            'HTTP-Referer': 'https://example.invalid',
+            'X-Title': 'demo',
+          },
+        });
+        expect(cfg.api_key_env).toBe('OPENROUTER_API_KEY');
+        expect(cfg.provider).toBe('openrouter');
+        expect(cfg.headers?.['HTTP-Referer']).toBe('https://example.invalid');
+      });
+    });
+  });
 });
