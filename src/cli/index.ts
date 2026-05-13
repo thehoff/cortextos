@@ -25,6 +25,8 @@ import { setupCommand } from './setup.js';
 import { spawnWorkerCommand, terminateWorkerCommand, listWorkersCommand, injectWorkerCommand } from './workers.js';
 import { importAgentCommand } from './import-agent.js';
 import { runOpenAIAgentCommand } from './run-openai-agent.js';
+import { initMcpCommand } from './init-mcp.js';
+import { addMcpCommand } from './add-mcp.js';
 
 const program = new Command();
 
@@ -59,6 +61,8 @@ program.addCommand(terminateWorkerCommand);
 program.addCommand(listWorkersCommand);
 program.addCommand(injectWorkerCommand);
 program.addCommand(importAgentCommand);
+program.addCommand(initMcpCommand);
+program.addCommand(addMcpCommand);
 // Hidden from default --help output: invoked by the openai-compatible PTY
 // adapter (src/pty/openai-compatible-pty.ts), not by end users. Available
 // for manual debugging via `cortextos run-openai-agent` if needed.
