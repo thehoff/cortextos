@@ -3,6 +3,10 @@ import type { BusPaths } from '../types/index.js';
 import { TOOL_REGISTRY, buildToolsParameter } from './tools/index.js';
 import type { ToolContext } from './tools/index.js';
 import type { ThreadMessage, ToolCall } from './sanitize-thread-replay.js';
+import type { McpManager } from './mcp/manager.js';
+import { dispatchMcpCall } from './mcp/manager.js';
+
+const MCP_NAME_PREFIX = 'mcp__';
 
 /**
  * Internal LLM API surface needed by the tool loop. Boundary between the
@@ -30,6 +34,8 @@ export interface LlmCallOptions {
 export interface ToolLoopOptions extends LlmCallOptions {
   /** Names of tools enabled on this agent. Empty → no tools sent. */
   enabledToolNames: string[];
+  /** MCP manager (PR5). When set, tool names with the mcp__ prefix dispatch through it. */
+  mcpManager?: McpManager;
   /**
    * Global per-tool timeout in ms. Undefined when the operator hasn't set
    * `tool_timeout_sec` in config.json — in that case the registry's per-
@@ -257,7 +263,7 @@ export async function callLlmWithTools(
   const sendBudget = { remaining: opts.sendBudget };
   const ctx: ToolContext = { ...opts.toolContext, sendBudget };
   const tools = opts.enabledToolNames.length > 0 && opts.toolsSupported.value
-    ? buildToolsParameter(opts.enabledToolNames)
+    ? buildToolsParameter(opts.enabledToolNames, opts.mcpManager?.tools)
     : null;
 
   let iteration = 0;
@@ -297,7 +303,11 @@ export async function callLlmWithTools(
       let result: string;
       let status: 'success' | 'timeout' | 'error' | 'malformed_args' | 'unknown_tool';
 
-      if (!(name in TOOL_REGISTRY)) {
+      const isMcp = name.startsWith(MCP_NAME_PREFIX);
+      const isKnownBuiltin = !isMcp && name in TOOL_REGISTRY;
+      const isKnownMcp = isMcp && opts.mcpManager?.routes.has(name) === true;
+
+      if (!isKnownBuiltin && !isKnownMcp) {
         result = `error: unknown tool "${name}"`;
         status = 'unknown_tool';
       } else {
@@ -314,20 +324,31 @@ export async function callLlmWithTools(
           continue;
         }
 
-        // Precedence: per-tool config override > global config override
-        // > per-definition default > hard fallback (10s).
-        const timeoutMs =
-          opts.toolTimeoutsMs[name] ??
-          opts.defaultToolTimeoutMs ??
-          TOOL_REGISTRY[name]!.defaultTimeoutMs ??
-          10_000;
         try {
-          result = await runToolWithTimeout(name, args, ctx, timeoutMs);
-          status = result.startsWith('error:') ? 'error' : 'success';
+          if (isKnownMcp) {
+            // Precedence for MCP tools (Codex pass-1 PR5-004):
+            //   per-tool config override > per-server default (route)
+            //   > opts.defaultMcpToolTimeoutMs is folded into the route's
+            //     defaultTimeoutMs at boot in manager.ts, so undefined here
+            //     just means "use the route's default".
+            const timeoutMs = opts.toolTimeoutsMs[name];
+            result = await dispatchMcpCall(opts.mcpManager!, name, args, timeoutMs);
+            status = 'success';
+          } else {
+            // Builtin precedence: per-tool config override > global config override
+            // > per-definition default > hard fallback (10s).
+            const timeoutMs =
+              opts.toolTimeoutsMs[name] ??
+              opts.defaultToolTimeoutMs ??
+              TOOL_REGISTRY[name]!.defaultTimeoutMs ??
+              10_000;
+            result = await runToolWithTimeout(name, args, ctx, timeoutMs);
+            status = result.startsWith('error:') ? 'error' : 'success';
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           result = `error: ${msg}`;
-          status = msg.includes('timeout') ? 'timeout' : 'error';
+          status = msg.includes('timeout') || msg.includes('timed out') ? 'timeout' : 'error';
         }
       }
 

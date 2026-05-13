@@ -24,26 +24,52 @@ export const TOOL_REGISTRY: Record<string, ToolDefinition> = {
   [busSendMessageTool.name]: busSendMessageTool,
 };
 
+/** MCP-discovered tool descriptor as exposed by the manager. */
+export interface McpToolForRegistry {
+  name: string;                  // qualified, e.g. mcp__sqlite__query
+  description?: string;
+  inputSchema?: unknown;
+}
+
 /**
- * Build the `tools` array for the Chat Completions request. The runner
- * passes the list of tool NAMES that the agent's config.json enabled;
- * we look up each in the registry and emit the OpenAI-spec shape.
- *
- * Caller validates names against the registry before this is reached
- * (boot-time check — see config validation in run-openai-agent.ts).
+ * Build the `tools` array for the Chat Completions request. Looks up
+ * each enabled name in the builtin registry OR in the optional MCP
+ * tools list (PR5). Unknown names are silently skipped — the caller
+ * validates name existence via the phased check at boot, so reaching
+ * this with an unknown name is a programmer error rather than
+ * something the LLM ought to see.
  */
 export function buildToolsParameter(
   enabledNames: string[],
+  mcpTools?: ReadonlyArray<McpToolForRegistry>,
 ): Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> {
-  return enabledNames.map(name => {
-    const tool = TOOL_REGISTRY[name]!;
-    return {
-      type: 'function' as const,
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    };
-  });
+  const mcpByName = new Map<string, McpToolForRegistry>();
+  for (const t of mcpTools ?? []) mcpByName.set(t.name, t);
+
+  const out: Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> = [];
+  for (const name of enabledNames) {
+    if (name in TOOL_REGISTRY) {
+      const tool = TOOL_REGISTRY[name]!;
+      out.push({
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      });
+    } else if (mcpByName.has(name)) {
+      const mcp = mcpByName.get(name)!;
+      out.push({
+        type: 'function' as const,
+        function: {
+          name: mcp.name,
+          description: mcp.description ?? '',
+          parameters: (mcp.inputSchema as object) ?? { type: 'object', properties: {} },
+        },
+      });
+    }
+    // Unknown names: skipped. Validation happens elsewhere.
+  }
+  return out;
 }
