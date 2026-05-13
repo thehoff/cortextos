@@ -103,6 +103,66 @@ describe('OpenAICompatiblePTY env contract', () => {
     cleanup();
   });
 
+  it('exposes exactly the PLAN.md CTX_/CRM_ key set — no extras, no Telegram leakage', async () => {
+    const { OpenAICompatiblePTY } = await import('../../../src/pty/openai-compatible-pty.js');
+    const env = makeEnv();
+    // No timezone, no org context, no secrets.env present — produces the
+    // minimal-but-complete CTX_/CRM_ surface that the PLAN.md table pins.
+    const pty = new OpenAICompatiblePTY(env, {} as AgentConfig);
+    await pty.spawn('fresh', '');
+    const spawnEnv = recordedSpawn!.options.env!;
+
+    // Negative assertion: the full set of CTX_/CRM_ keys that should EVER
+    // appear under the openai-compatible runtime is documented here. Any
+    // future addition or typo (`CTX_ORCHESTRATOR` instead of
+    // `CTX_ORCHESTRATOR_AGENT`, etc.) shows up here as an unexpected key.
+    const allowedCtxKeys = new Set([
+      'CTX_INSTANCE_ID',
+      'CTX_ROOT',
+      'CTX_FRAMEWORK_ROOT',
+      'CTX_AGENT_NAME',
+      'CTX_ORG',
+      'CTX_AGENT_DIR',
+      'CTX_PROJECT_ROOT',
+      // Conditional: only when config.timezone or process.env.TZ is set.
+      'CTX_TIMEZONE',
+      // Conditional: only when org context.json has an orchestrator field.
+      'CTX_ORCHESTRATOR_AGENT',
+    ]);
+    const allowedCrmKeys = new Set(['CRM_AGENT_NAME', 'CRM_TEMPLATE_ROOT']);
+
+    const actualCtxKeys = Object.keys(spawnEnv).filter(k => k.startsWith('CTX_'));
+    const actualCrmKeys = Object.keys(spawnEnv).filter(k => k.startsWith('CRM_'));
+
+    for (const k of actualCtxKeys) {
+      expect(allowedCtxKeys, `unexpected CTX_ key leaked into spawn env: ${k}`).toContain(k);
+    }
+    for (const k of actualCrmKeys) {
+      expect(allowedCrmKeys, `unexpected CRM_ key leaked into spawn env: ${k}`).toContain(k);
+    }
+    cleanup();
+  });
+
+  it('falls back to process.env.TZ when config.timezone is absent', async () => {
+    const { OpenAICompatiblePTY } = await import('../../../src/pty/openai-compatible-pty.js');
+    const env = makeEnv();
+    const originalTZ = process.env.TZ;
+    process.env.TZ = 'Europe/London';
+    try {
+      const pty = new OpenAICompatiblePTY(env, {} as AgentConfig);
+      await pty.spawn('fresh', '');
+      const spawnEnv = recordedSpawn!.options.env!;
+      // PLAN.md env table: CTX_TIMEZONE = config.timezone || process.env.TZ.
+      // Code path at src/pty/openai-compatible-pty.ts: if config.timezone
+      // missing AND process.env.TZ set, copy TZ into CTX_TIMEZONE only.
+      expect(spawnEnv['CTX_TIMEZONE']).toBe('Europe/London');
+    } finally {
+      if (originalTZ === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTZ;
+    }
+    cleanup();
+  });
+
   it('does NOT inject Telegram-only keys (CHAT_ID, BOT_TOKEN, CTX_TELEGRAM_CHAT_ID)', async () => {
     const { OpenAICompatiblePTY } = await import('../../../src/pty/openai-compatible-pty.js');
     const env = makeEnv();

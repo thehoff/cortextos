@@ -2,9 +2,7 @@ import { Command } from 'commander';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import * as readline from 'readline';
-import { sendMessage, ackInbox } from '../bus/message.js';
-import { updateHeartbeat } from '../bus/heartbeat.js';
-import { logEvent } from '../bus/event.js';
+import { sendMessage, ackInbox, updateHeartbeat, logEvent } from '../bus/index.js';
 import { resolvePaths } from '../utils/paths.js';
 import { stripControlChars } from '../utils/validate.js';
 
@@ -297,6 +295,28 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
       }
     }
 
+    // Register the SIGTERM trap BEFORE any startup bus calls (or the READY
+    // emit) so a daemon-initiated stop arriving mid-boot still flushes the
+    // 'stopping' heartbeat + agent_offline event. Without this, AgentProcess
+    // signalShutdown → SIGTERM could land in the race window between
+    // bootstrap and `process.on(...)`, causing the default-action terminate.
+    // The heartbeat timer is created later (inside startHeartbeatLoop) — the
+    // shutdown handler tolerates a null timer for early-shutdown safety.
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let shuttingDown = false;
+    const shutdown = (): void => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      safeUpdateHeartbeat('stopping', currentTask);
+      safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
+      // Disk writes are sync (atomicWriteSync / appendFileSync); by the time
+      // those calls return the file content is in the page cache.
+      process.exit(0);
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+
     safeUpdateHeartbeat('idle', '');
     safeLogEvent('milestone', 'agent_online', 'info', { agent: agentName, model, endpoint });
 
@@ -305,25 +325,9 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // src/pty/openai-compatible-pty.ts:BOOTSTRAP_PATTERN.
     process.stdout.write('[openai-runner] READY\n');
 
-    const heartbeatTimer = setInterval(() => {
+    heartbeatTimer = setInterval(() => {
       safeUpdateHeartbeat(currentStatus, currentTask);
     }, heartbeatMs);
-
-    let shuttingDown = false;
-    const shutdown = (): void => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      clearInterval(heartbeatTimer);
-      safeUpdateHeartbeat('stopping', currentTask);
-      safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
-      // Give the disk writes a moment to flush before exiting. updateHeartbeat
-      // and logEvent are sync (atomicWriteSync / appendFileSync), so by the
-      // time those calls return the file content is already in the page cache
-      // — process.exit here is safe.
-      process.exit(0);
-    };
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
 
     try {
       for await (const { sender, msgId, body } of readBlocks()) {

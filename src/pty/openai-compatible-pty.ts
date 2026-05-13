@@ -139,6 +139,14 @@ export class OpenAICompatiblePTY {
     // escape sequences as opaque bytes inside the first/last line, which
     // would break the AGENT MESSAGE header/terminator regexes. Strip here
     // so the runner sees clean line-delimited text.
+    //
+    // Assumption: each call to write() contains complete paste markers
+    // (start AND end of any \x1b[200~...\x1b[201~ pair lands in a single
+    // call). inject.ts at src/pty/inject.ts:67-80 satisfies this: small
+    // content is sent in one write, and large content sends PASTE_START
+    // and PASTE_END as their own atomic write() calls with body chunks
+    // between. If a future caller hand-rolls chunked writes split across
+    // a paste marker, the unmatched bytes will leak through to the runner.
     const cleaned = data.replace(PASTE_START_RE, '').replace(PASTE_END_RE, '');
     this.pty.write(cleaned);
   }
