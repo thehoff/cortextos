@@ -502,6 +502,12 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
       safeUpdateHeartbeat(currentStatus, currentTask);
     }, heartbeatMs);
 
+    // PR4 Codex pass-1 PR4-005: count consecutive 401/403 responses from
+    // the LLM endpoint so the runner can exit after a small budget,
+    // letting PM2 surface "errored" rather than flapping silently.
+    let consecutiveAuthFailures = 0;
+    const AUTH_FAILURE_LIMIT = 3;
+
     try {
       for await (const { sender, msgId, body } of readBlocks()) {
         safeUpdateHeartbeat('working', `answering ${sender}`);
@@ -554,13 +560,41 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
           } else {
             safeLogEvent('task', 'task_completed', 'info', { answered: sender, msg_id: msgId });
           }
+          // A successful turn (with or without max-iterations) means the
+          // upstream auth is working; reset the failure counter so an
+          // intermittent 401 doesn't accumulate forever.
+          consecutiveAuthFailures = 0;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[openai-runner] task failed for ${msgId}: ${errMsg}\n`);
           // Codex M4: graceful context-window failure with a user-visible
           // reply rather than a silent ack-and-drop.
           let userFacing = 'task failed';
-          if (errMsg.startsWith('CONTEXT_WINDOW:')) {
+          // PR4 Codex pass-1 PR4-005: detect upstream 401/403 and surface
+          // an actionable hint instead of "task failed". The redactSecrets
+          // pass in loop.ts has already scrubbed the key from errMsg, so
+          // it's safe to expose the HTTP status to the operator.
+          const authMatch = errMsg.match(/^LLM HTTP (401|403):/);
+          if (authMatch) {
+            consecutiveAuthFailures++;
+            const httpStatus = authMatch[1];
+            const keySource = cfg.api_key_env
+              ? `api_key_env ${cfg.api_key_env}`
+              : (cfg.api_key ? 'api_key (literal in config.json)' : 'OPENAI_API_KEY env fallback');
+            const providerName = cfg.provider ?? 'unknown';
+            userFacing =
+              `LLM authentication failed for provider ${providerName} ` +
+              `(HTTP ${httpStatus} from ${endpoint}). Check ${keySource} ` +
+              `and restart the agent.`;
+            safeLogEvent('error', 'agent_auth_failed', 'error', {
+              msg_id: msgId,
+              status: Number(httpStatus),
+              provider: cfg.provider,
+              api_key_env: cfg.api_key_env,
+              endpoint,
+              consecutive_failures: consecutiveAuthFailures,
+            });
+          } else if (errMsg.startsWith('CONTEXT_WINDOW:')) {
             userFacing = 'I exceeded the context window for this conversation. Please ask a more focused question or start a new thread.';
             safeLogEvent('error', 'task_failed', 'error', { msg_id: msgId, reason: 'context_window_exceeded' });
           } else {
@@ -570,6 +604,21 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
             sendMessage(paths, agentName, sender, 'normal', userFacing, msgId);
           } catch { /* sender lookup may also fail — drop quietly */ }
           try { ackInbox(paths, msgId); } catch { /* already gone */ }
+
+          // PR4 Codex pass-1 PR4-005: exit after three consecutive auth
+          // failures so PM2 surfaces the unhealthy state rather than the
+          // agent silently failing every inbox message forever.
+          if (consecutiveAuthFailures >= AUTH_FAILURE_LIMIT) {
+            process.stderr.write(
+              `[openai-runner] ${consecutiveAuthFailures} consecutive auth failures — exiting so PM2 surfaces the error\n`,
+            );
+            safeLogEvent('error', 'agent_auth_failed', 'error', {
+              reason: 'consecutive_auth_failure_limit',
+              limit: AUTH_FAILURE_LIMIT,
+              endpoint,
+            });
+            process.exit(1);
+          }
         } finally {
           safeUpdateHeartbeat('idle', '');
         }
