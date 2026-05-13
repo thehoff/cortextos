@@ -29,9 +29,83 @@ turns in the same thread:
 
 ## What this agent CANNOT do
 
-- No multi-step reasoning beyond a single LLM call per message.
+- No multi-step Claude-style reasoning. Tool use (introduced in a
+  later runtime version) is bounded by `tool_loop_max_iterations`
+  and is for retrieval/utility tools, not open-ended planning.
 - No Telegram, no Claude skills, no codex skills.
-- No tool use (deferred to a future v2 of the runtime).
 
 For multi-step tasks, decompose into single questions and dispatch each
 separately, then combine the answers in your own reasoning.
+
+## Configuring against a hosted provider
+
+The `openai-compatible` runtime accepts any endpoint that speaks the
+OpenAI `/v1/chat/completions` shape. To point an agent at a hosted
+provider (OpenRouter, Together, Groq, Fireworks, etc.) without
+committing a secret to `config.json`:
+
+1. Place the API key in your org-level `secrets.env`:
+
+       OPENROUTER_API_KEY=sk-or-...
+
+2. In the agent's `config.json`, use `api_key_env` instead of `api_key`:
+
+       {
+         "endpoint": "https://openrouter.ai/api",
+         "model": "anthropic/claude-3.5-haiku",
+         "api_key_env": "OPENROUTER_API_KEY",
+         "provider": "openrouter",
+         "headers": {
+           "HTTP-Referer": "https://your-app.example",
+           "X-Title": "Your app"
+         }
+       }
+
+### Field reference
+
+- `api_key_env` — name of a `process.env` variable holding the key.
+  Resolved once when the runner starts; rotating the secret requires
+  `cortextos disable <agent> && cortextos enable <agent>` (or any
+  other restart). Mutually exclusive with `api_key`.
+- `api_key` — literal API key string. Fine for local LLMs that
+  ignore Authorization; dangerous for hosted providers because the
+  file is intended to be committable. Use `api_key_env` for anything
+  beyond throwaway local testing.
+- `headers` — extra HTTP headers merged into every LLM request. The
+  runner reserves `Content-Type` and `Authorization`; setting them
+  here will be rejected at config validation. CR/LF/NUL in values
+  are also rejected (CRLF-injection guard).
+- `provider` — informational kebab-lowercase tag. Surfaces in
+  `agent_online` event metadata and the dashboard. Some values
+  also trigger default headers: `provider: "openrouter"` injects
+  `HTTP-Referer: https://github.com/grandamenium/cortextos` and
+  `X-Title: cortextOS` so cortextOS-deployed agents accumulate
+  attribution on the OpenRouter leaderboard. To attribute traffic
+  to your own app, set those headers explicitly in `headers` —
+  operator-set values always win. To opt out of attribution
+  entirely, omit `provider`.
+
+### Endpoint shape
+
+The runner appends `/v1/chat/completions` to whatever you put in
+`endpoint`. Common providers:
+
+| Provider | `endpoint` value |
+|---|---|
+| OpenRouter | `https://openrouter.ai/api` (NOT `.../api/v1`) |
+| Together | `https://api.together.xyz/v1` (NO — actually omit the `/v1`; check current docs) |
+| Local llama.cpp / vLLM | `http://192.168.x.x:8080` |
+
+If the path lands at `<your-endpoint>/v1/chat/completions` you're
+correctly configured.
+
+### When the key is wrong
+
+On HTTP 401 or 403 from the LLM endpoint, the agent replies to the
+sending inbox with a structured hint naming `api_key_env` and asking
+the operator to restart the agent. After three consecutive auth
+failures the runner exits non-zero so PM2 surfaces the unhealthy
+state. The upstream response body is sanitized of Bearer tokens
+before being embedded in any error message or event, so a debug-
+style backend that echoes the inbound Authorization header cannot
+leak the resolved key.
