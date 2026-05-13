@@ -111,7 +111,7 @@ Always include `msg_id` as reply_to (auto-ACKs the original). Un-ACK'd messages 
 
 ## OpenAI-Compatible Specialists
 
-Some agents in your org may be **`openai-compatible`** specialists — lightweight single-purpose agents backed by a local OpenAI-compatible LLM endpoint (llama.cpp, vLLM, LM Studio, Ollama, etc.). You dispatch to them exactly like any other agent:
+Some agents in your org may be **`openai-compatible`** specialists — lightweight single-purpose agents backed by an OpenAI-compatible LLM endpoint. That endpoint can be local (llama.cpp, vLLM, LM Studio, Ollama, etc.) OR a hosted provider (OpenRouter, Together, Groq, etc.) — the dispatch contract is identical for you either way. You dispatch to them exactly like any other agent:
 
 ```
 cortextos bus send-message <specialist> normal "<your question>"
