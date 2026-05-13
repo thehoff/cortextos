@@ -58,6 +58,30 @@ interface AssistantMessage {
 
 const TOOLS_UNSUPPORTED_RE = /tool|function|unsupported/i;
 const CONTEXT_LENGTH_RE = /context.?length|too.?long|too many tokens|maximum context/i;
+const BEARER_TOKEN_RE = /Bearer\s+[A-Za-z0-9._\-+/=]+/gi;
+
+/**
+ * Strip the resolved API key + any Bearer token pattern from a piece of
+ * upstream text before that text is embedded in a thrown Error message,
+ * logged to stderr, or written into an analytics event.
+ *
+ * Some debug-style HTTP backends echo the inbound Authorization header
+ * in their 4xx response body. With PR4's api_key_env, the key is a real
+ * secret sourced from the org-level secrets.env — leaking it via stderr
+ * would defeat the purpose of moving it out of config.json.
+ *
+ * The 8-character floor on the api-key substitution avoids redacting
+ * accidentally-common short strings if an operator points api_key_env
+ * at a placeholder value during smoke tests.
+ */
+export function redactSecrets(text: string, apiKey: string | undefined): string {
+  let out = text;
+  if (apiKey && apiKey.length >= 8) {
+    out = out.split(apiKey).join('***REDACTED***');
+  }
+  out = out.replace(BEARER_TOKEN_RE, 'Bearer ***REDACTED***');
+  return out;
+}
 
 /**
  * Single Chat Completions request with the documented fallback semantics:
@@ -96,14 +120,19 @@ async function callLlmOnce(
       signal: controller.signal,
     });
     if (!r.ok) {
-      const errText = (await r.text().catch(() => '')).slice(0, 500);
-      if (r.status === 400 && tools && tools.length > 0 && TOOLS_UNSUPPORTED_RE.test(errText)) {
+      const rawText = (await r.text().catch(() => '')).slice(0, 500);
+      if (r.status === 400 && tools && tools.length > 0 && TOOLS_UNSUPPORTED_RE.test(rawText)) {
         // Codex H3: the endpoint doesn't support `tools`. Flip the cache and
         // re-issue without tools so the agent degrades gracefully.
         opts.toolsSupported.value = false;
         return callLlmOnce(messages, null, opts);
       }
-      if (r.status === 400 && CONTEXT_LENGTH_RE.test(errText)) {
+      // PR4 Codex pass-1 PR4-001 (HIGH): some upstream debug-style backends
+      // echo the inbound Authorization header into 4xx bodies. Redact before
+      // embedding in thrown Error message so the key cannot leak via stderr,
+      // PM2 logs, or analytics events that capture the error text.
+      const errText = redactSecrets(rawText, opts.apiKey);
+      if (r.status === 400 && CONTEXT_LENGTH_RE.test(rawText)) {
         throw new Error('CONTEXT_WINDOW: ' + errText);
       }
       throw new Error(`LLM HTTP ${r.status}: ${errText}`);
