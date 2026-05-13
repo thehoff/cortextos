@@ -1,12 +1,16 @@
 import { Command } from 'commander';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import * as readline from 'readline';
 import { sendMessage, ackInbox, updateHeartbeat, logEvent } from '../bus/index.js';
 import { resolvePaths } from '../utils/paths.js';
 import { stripControlChars } from '../utils/validate.js';
+import { callLlmWithTools } from '../openai-runner/loop.js';
+import { sanitizeForLlmReplay, type ThreadMessage } from '../openai-runner/sanitize-thread-replay.js';
+import { TOOL_REGISTRY } from '../openai-runner/tools/index.js';
 
-interface RunnerConfig {
+export interface RunnerConfig {
   endpoint: string;
   model: string;
   api_key?: string;
@@ -14,21 +18,22 @@ interface RunnerConfig {
   temperature?: number;
   heartbeat_interval_sec?: number;
   request_timeout_sec?: number;
-}
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+  /** Names of tools (from TOOL_REGISTRY) the model can call. Empty/absent = no tools. */
+  tools?: string[];
+  /** Max number of tool-call iterations per inbox message. Default 5. */
+  tool_loop_max_iterations?: number;
+  /** Global per-tool timeout in seconds. Default 10. */
+  tool_timeout_sec?: number;
+  /** Per-tool timeout overrides in seconds. */
+  tool_timeouts_sec?: Record<string, number>;
+  /** Cap on bus_send_message calls per inbox message. Default 3. */
+  tool_bus_send_budget?: number;
 }
 
 interface ParsedMessage {
   sender: string;
   msgId: string;
   body: string;
-}
-
-interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
 }
 
 /**
@@ -40,10 +45,6 @@ interface ChatCompletionResponse {
  *   <body — may contain inner ``` fences, "Reply using:" lines, anything>
  *   ```
  *   Reply using: cortextos bus send-message <sender> normal '<your reply>' <msg_id>
- *
- * The body's outer ``` fences delimit the user payload. The terminator is a
- * full-line match on the exact Reply-using line, NOT a "Reply using:" prefix —
- * a body legitimately containing that phrase must not trigger an early end.
  */
 const HEADER_RE = /^=== AGENT MESSAGE from ([a-zA-Z0-9_-]+)(?: \[reply_to: ([a-zA-Z0-9_.-]+)\])? \[msg_id: ([a-zA-Z0-9_.-]+)\] ===$/;
 const TERMINATOR_RE = /^Reply using: cortextos bus send-message \S+ normal '<your reply>' \S+\s*$/;
@@ -78,6 +79,48 @@ export function validateConfig(raw: unknown): RunnerConfig {
   if (c.request_timeout_sec !== undefined && (typeof c.request_timeout_sec !== 'number' || c.request_timeout_sec < 1)) {
     throw new Error('config.json: "request_timeout_sec" must be a positive number');
   }
+  if (c.tools !== undefined) {
+    if (!Array.isArray(c.tools) || c.tools.some(t => typeof t !== 'string')) {
+      throw new Error('config.json: "tools" must be an array of strings');
+    }
+    // Codex M6: fail fast on unknown tool names so a typo doesn't silently
+    // ship a tool-less agent that the operator thinks has tools.
+    const unknown = (c.tools as string[]).filter(t => !(t in TOOL_REGISTRY));
+    if (unknown.length > 0) {
+      throw new Error(
+        `config.json: unknown tool(s) in "tools": ${unknown.join(', ')}. ` +
+        `Available: ${Object.keys(TOOL_REGISTRY).join(', ')}`,
+      );
+    }
+  }
+  if (c.tool_loop_max_iterations !== undefined && (typeof c.tool_loop_max_iterations !== 'number' || c.tool_loop_max_iterations < 1)) {
+    throw new Error('config.json: "tool_loop_max_iterations" must be a positive number');
+  }
+  if (c.tool_timeout_sec !== undefined && (typeof c.tool_timeout_sec !== 'number' || c.tool_timeout_sec < 1)) {
+    throw new Error('config.json: "tool_timeout_sec" must be a positive number');
+  }
+  if (c.tool_timeouts_sec !== undefined) {
+    // Codex P3-4: validate each entry. Otherwise a typo in a tool name or
+    // a string value silently produces broken timeout policy that's hard
+    // to diagnose from runtime behavior alone.
+    if (typeof c.tool_timeouts_sec !== 'object' || c.tool_timeouts_sec === null || Array.isArray(c.tool_timeouts_sec)) {
+      throw new Error('config.json: "tool_timeouts_sec" must be an object of tool-name → seconds');
+    }
+    for (const [k, v] of Object.entries(c.tool_timeouts_sec)) {
+      if (!(k in TOOL_REGISTRY)) {
+        throw new Error(
+          `config.json: tool_timeouts_sec key "${k}" is not a known tool. ` +
+          `Available: ${Object.keys(TOOL_REGISTRY).join(', ')}`,
+        );
+      }
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 1) {
+        throw new Error(`config.json: tool_timeouts_sec["${k}"] must be a finite number >= 1 (got ${JSON.stringify(v)})`);
+      }
+    }
+  }
+  if (c.tool_bus_send_budget !== undefined && (typeof c.tool_bus_send_budget !== 'number' || c.tool_bus_send_budget < 0)) {
+    throw new Error('config.json: "tool_bus_send_budget" must be a non-negative number');
+  }
   return c as unknown as RunnerConfig;
 }
 
@@ -89,17 +132,21 @@ function parseMemoryDirective(body: string): { threadId: string | null; cleaned:
   return { threadId: null, cleaned: body };
 }
 
-function loadThread(threadDir: string, threadId: string | null): ChatMessage[] {
+/**
+ * Load a thread JSONL into memory. Returns raw entries; the caller should
+ * apply sanitizeForLlmReplay() before sending to the LLM (Codex H2).
+ */
+function loadThread(threadDir: string, threadId: string | null): ThreadMessage[] {
   if (!threadId) return [];
   const path = join(threadDir, `${threadId}.jsonl`);
   if (!existsSync(path)) return [];
-  const out: ChatMessage[] = [];
+  const out: ThreadMessage[] = [];
   const content = readFileSync(path, 'utf-8');
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      out.push(JSON.parse(trimmed) as ChatMessage);
+      out.push(JSON.parse(trimmed) as ThreadMessage);
     } catch {
       process.stderr.write(`[openai-runner] thread ${threadId}: skipping malformed line\n`);
     }
@@ -107,24 +154,30 @@ function loadThread(threadDir: string, threadId: string | null): ChatMessage[] {
   return out;
 }
 
-function appendToThread(threadDir: string, threadId: string | null, userText: string, assistantText: string): void {
+/**
+ * Append the user message + the messages the LLM loop produced (assistant
+ * turns, role:tool entries) to the thread JSONL. Extends PR2's
+ * user+assistant schema additively: tool_calls and role:"tool" entries
+ * are preserved verbatim. Old logs (PR2 era) and new logs interleave
+ * cleanly because the schema is JSON.
+ */
+function appendToThread(
+  threadDir: string,
+  threadId: string | null,
+  userText: string,
+  newMessages: ThreadMessage[],
+): void {
   if (!threadId) return;
   mkdirSync(threadDir, { recursive: true });
   const path = join(threadDir, `${threadId}.jsonl`);
-  // appendFileSync (not atomicWriteSync) matches the house JSONL pattern in
-  // src/bus/event.ts:65 and src/daemon/agent-process.ts. atomic.ts is whole-
-  // file write+rename; using it per-record would overwrite prior history.
-  appendFileSync(
-    path,
-    JSON.stringify({ role: 'user', content: userText }) + '\n' +
-    JSON.stringify({ role: 'assistant', content: assistantText }) + '\n',
-  );
+  const lines: string[] = [JSON.stringify({ role: 'user', content: userText })];
+  for (const m of newMessages) {
+    lines.push(JSON.stringify(m));
+  }
+  appendFileSync(path, lines.join('\n') + '\n');
 }
 
 function stripOuterFences(lines: string[]): string {
-  // Drop a leading ``` (the opening fence after the AGENT MESSAGE header)
-  // and a trailing ``` (the closing fence before the terminator). Inner
-  // ``` lines belong to the body and are preserved untouched.
   let start = 0;
   let end = lines.length;
   if (start < end && lines[start]!.trim() === '```') start++;
@@ -170,8 +223,6 @@ async function* readBlocks(): AsyncGenerator<ParsedMessage> {
     } else if (inMessage) {
       collected.push(line);
     }
-    // Lines outside any envelope are ignored — daemon noise, blank lines
-    // from the trailing \r that inject.ts sends 300ms after the paste, etc.
   }
 
   if (inMessage) {
@@ -181,46 +232,28 @@ async function* readBlocks(): AsyncGenerator<ParsedMessage> {
   }
 }
 
-async function callLlm(
-  endpoint: string,
-  apiKey: string | undefined,
-  model: string,
-  systemPrompt: string,
-  body: string,
-  history: ChatMessage[],
-  maxTokens: number,
-  temperature: number,
-  timeoutMs: number,
-): Promise<string> {
-  const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: body },
-  ];
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+/**
+ * Read the enabled-agents.json registry into a set of agent names so
+ * `bus_send_message` can validate its `to` argument before sending
+ * (Codex M3 — prevents silent dead letters to nonexistent agents).
+ *
+ * The registry path is `~/.cortextos/<instance>/config/enabled-agents.json`
+ * — same shape `add-agent.ts` writes. Missing or unparseable file → empty
+ * set (the tool just rejects every target, which is the safe default).
+ */
+function loadEnabledAgentsRegistry(instanceId: string): Set<string> {
+  const path = join(homedir(), '.cortextos', instanceId, 'config', 'enabled-agents.json');
+  if (!existsSync(path)) return new Set();
   try {
-    const r = await fetch(`${endpoint}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature }),
-      signal: controller.signal,
-    });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => '');
-      throw new Error(`LLM HTTP ${r.status}: ${errText.slice(0, 500)}`);
-    }
-    const j = (await r.json()) as ChatCompletionResponse;
-    const answer = (j.choices?.[0]?.message?.content ?? '').trim();
-    if (!answer) {
-      throw new Error('LLM returned empty response');
-    }
-    return answer;
-  } finally {
-    clearTimeout(timer);
+    const obj = JSON.parse(readFileSync(path, 'utf-8'));
+    if (!obj || typeof obj !== 'object') return new Set();
+    return new Set(
+      Object.entries(obj)
+        .filter(([, v]) => v && typeof v === 'object' && (v as Record<string, unknown>).enabled !== false)
+        .map(([k]) => k),
+    );
+  } catch {
+    return new Set();
   }
 }
 
@@ -267,8 +300,29 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     const requestTimeoutMs = (cfg.request_timeout_sec ?? 120) * 1000;
     const apiKey = cfg.api_key ?? process.env['OPENAI_API_KEY'];
 
+    // Tool config
+    const enabledTools = cfg.tools ?? [];
+    const maxIterations = cfg.tool_loop_max_iterations ?? 5;
+    // Codex P3-2: keep undefined when no global override is set so the loop's
+    // precedence chain (per-tool > global > registry.defaultTimeoutMs > 10s)
+    // actually reaches the per-definition default. Materializing to 10000
+    // here would mask every tool's defaultTimeoutMs silently.
+    const defaultToolTimeoutMs = cfg.tool_timeout_sec === undefined
+      ? undefined
+      : cfg.tool_timeout_sec * 1000;
+    const toolTimeoutsMs: Record<string, number> = {};
+    for (const [k, v] of Object.entries(cfg.tool_timeouts_sec ?? {})) {
+      toolTimeoutsMs[k] = v * 1000;
+    }
+    const sendBudget = cfg.tool_bus_send_budget ?? 3;
+    // Cached per-process flag: flipped to false on the first endpoint
+    // rejection of `tools` so we don't keep retrying. Lives across all
+    // inbox messages handled by this runner instance.
+    const toolsSupported = { value: true };
+
     const paths = resolvePaths(agentName, instanceId, org || undefined);
     const threadDir = join(paths.stateDir, 'threads');
+    const enabledAgentsRegistry = loadEnabledAgentsRegistry(instanceId);
 
     let currentStatus = 'starting';
     let currentTask = '';
@@ -296,12 +350,7 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     }
 
     // Register the SIGTERM trap BEFORE any startup bus calls (or the READY
-    // emit) so a daemon-initiated stop arriving mid-boot still flushes the
-    // 'stopping' heartbeat + agent_offline event. Without this, AgentProcess
-    // signalShutdown → SIGTERM could land in the race window between
-    // bootstrap and `process.on(...)`, causing the default-action terminate.
-    // The heartbeat timer is created later (inside startHeartbeatLoop) — the
-    // shutdown handler tolerates a null timer for early-shutdown safety.
+    // emit) — see PR2 Codex P2-1 fix.
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let shuttingDown = false;
     const shutdown = (): void => {
@@ -310,19 +359,16 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       safeUpdateHeartbeat('stopping', currentTask);
       safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
-      // Disk writes are sync (atomicWriteSync / appendFileSync); by the time
-      // those calls return the file content is in the page cache.
       process.exit(0);
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
 
     safeUpdateHeartbeat('idle', '');
-    safeLogEvent('milestone', 'agent_online', 'info', { agent: agentName, model, endpoint });
+    safeLogEvent('milestone', 'agent_online', 'info', {
+      agent: agentName, model, endpoint, tools: enabledTools,
+    });
 
-    // Bootstrap signal — the PTY adapter watches for this exact line to mark
-    // the agent as ready for message injection. Must match
-    // src/pty/openai-compatible-pty.ts:BOOTSTRAP_PATTERN.
     process.stdout.write('[openai-runner] READY\n');
 
     heartbeatTimer = setInterval(() => {
@@ -334,22 +380,67 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
         safeUpdateHeartbeat('working', `answering ${sender}`);
         try {
           const { threadId, cleaned } = parseMemoryDirective(body);
-          const history = loadThread(threadDir, threadId);
-          const answer = await callLlm(
-            endpoint, apiKey, model, systemPrompt, cleaned, history,
-            maxTokens, temperature, requestTimeoutMs,
+          const rawHistory = loadThread(threadDir, threadId);
+          const cleanHistory = sanitizeForLlmReplay(rawHistory);
+
+          const initialMessages: ThreadMessage[] = [
+            { role: 'system', content: systemPrompt },
+            ...cleanHistory,
+            { role: 'user', content: cleaned },
+          ];
+
+          const { finalContent, appendMessages, hitMaxIterations } = await callLlmWithTools(
+            initialMessages,
+            {
+              endpoint, apiKey, model, maxTokens, temperature, requestTimeoutMs,
+              toolsSupported,
+              enabledToolNames: enabledTools,
+              defaultToolTimeoutMs,
+              toolTimeoutsMs,
+              maxIterations,
+              sendBudget,
+              onProgress: safeUpdateHeartbeat,
+              busPaths: paths,
+              agentName,
+              org,
+              toolContext: {
+                agentName,
+                agentDir,
+                paths,
+                org,
+                currentInboxMsgId: msgId,
+                enabledAgentsRegistry,
+              },
+            },
           );
-          appendToThread(threadDir, threadId, cleaned, answer);
-          const safeAnswer = stripControlChars(answer);
+
+          appendToThread(threadDir, threadId, cleaned, appendMessages);
+          const safeAnswer = stripControlChars(finalContent);
           sendMessage(paths, agentName, sender, 'normal', safeAnswer, msgId);
           ackInbox(paths, msgId);
-          safeLogEvent('task', 'task_completed', 'info', { answered: sender, msg_id: msgId });
+
+          if (hitMaxIterations) {
+            safeLogEvent('error', 'task_failed', 'warning', {
+              msg_id: msgId, reason: 'tool_loop_max_iterations_exceeded',
+            });
+          } else {
+            safeLogEvent('task', 'task_completed', 'info', { answered: sender, msg_id: msgId });
+          }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[openai-runner] task failed for ${msgId}: ${errMsg}\n`);
-          safeLogEvent('error', 'task_failed', 'error', { msg_id: msgId, error: errMsg });
-          // Ack the poison message — better dropped than re-looped on every
-          // restart. The error event captures the loss for postmortem.
+          // Codex M4: graceful context-window failure with a user-visible
+          // reply rather than a silent ack-and-drop.
+          let userFacing = 'task failed';
+          if (errMsg.startsWith('CONTEXT_WINDOW:')) {
+            userFacing = 'I exceeded the context window for this conversation. Please ask a more focused question or start a new thread.';
+            safeLogEvent('error', 'task_failed', 'error', { msg_id: msgId, reason: 'context_window_exceeded' });
+          } else {
+            safeLogEvent('error', 'task_failed', 'error', { msg_id: msgId, error: errMsg });
+          }
+          try {
+            sendMessage(paths, agentName, sender, 'normal', userFacing, msgId);
+          } catch { /* sender lookup may also fail — drop quietly */ }
           try { ackInbox(paths, msgId); } catch { /* already gone */ }
         } finally {
           safeUpdateHeartbeat('idle', '');
