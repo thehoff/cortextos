@@ -18,7 +18,10 @@ const NON_CODEX_TEMPLATES = ['orchestrator', 'analyst', 'm2c1-worker', 'hermes']
 // Same idea for openai-compatible: only the agent-thin scaffold makes sense.
 // Pairing openai-compatible with orchestrator/analyst/etc would copy
 // Claude-flavored templates into an agent whose runtime can't satisfy them.
-const NON_THIN_TEMPLATES = ['orchestrator', 'analyst', 'm2c1-worker', 'hermes'] as const;
+// `agent-codex` is also excluded — its config.json hard-codes `enabled: true`
+// and the codex skill bootstrap, both of which would conflict with PR1's
+// enabled:false posture for openai-compatible agents.
+const NON_THIN_TEMPLATES = ['orchestrator', 'analyst', 'm2c1-worker', 'hermes', 'agent-codex'] as const;
 
 export const addAgentCommand = new Command('add-agent')
   .argument('<name>', 'Agent name')

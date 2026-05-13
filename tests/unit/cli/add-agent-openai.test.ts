@@ -160,23 +160,31 @@ describe('PR1: add-agent --template agent-thin / --runtime openai-compatible', (
     expect(agentsMd).toMatch(/OpenAI-compatible specialist/);
   });
 
-  it('rejects --runtime openai-compatible paired with a non-thin template', async () => {
+  it.each([
+    ['orchestrator'],
+    ['analyst'],
+    ['m2c1-worker'],
+    ['hermes'],
+    ['agent-codex'],
+  ])('rejects --runtime openai-compatible paired with --template %s', async (template) => {
     // Mirrors the codex NON_CODEX_TEMPLATES check — pairing openai-compatible
-    // with orchestrator/analyst/etc. would copy Claude-flavored templates
-    // into a runtime that can't satisfy them.
+    // with a non-thin template would copy a scaffold whose config.json /
+    // skill layout doesn't match the openai-compatible runtime.
+    // agent-codex specifically is excluded because its config.json has
+    // enabled:true hard-coded (PR1 needs enabled:false for openai-compatible).
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(addAgentCommand.parseAsync([
-      'node', 'cli', 'rag-bad', '--runtime', 'openai-compatible',
-      '--template', 'orchestrator',
+      'node', 'cli', `rag-bad-${template}`, '--runtime', 'openai-compatible',
+      '--template', template,
       '--org', 'testorg', '--instance', 'pr1-thin-test',
     ])).rejects.toThrow(/process.exit\(1\)/);
 
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/no openai-compatible variant of "orchestrator"/),
+      expect.stringMatching(new RegExp(`no openai-compatible variant of "${template}"`)),
     );
 
     exitSpy.mockRestore();
