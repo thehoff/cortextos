@@ -327,17 +327,19 @@ export const addAgentCommand = new Command('add-agent')
     } catch { /* start fresh */ }
 
     if (!enabledAgents[name]) {
-      // openai-compatible agents register as enabled:false until PR2 ships
-      // the PTY dispatch + enable-agent relaxation. PR1 ships dual-write
-      // (config.json + enabled-agents.json) belt-and-braces — the daemon
-      // dispatch-allowlist guard catches anything that slips through.
+      // PR1 registered openai-compatible agents as enabled:false because the
+      // PTY dispatch case didn't exist yet. PR2 lands the OpenAICompatiblePTY
+      // adapter and adds 'openai-compatible' to the daemon's dispatch
+      // allowlist, so the belt-and-braces disable is no longer needed —
+      // every runtime registers as enabled:true here, matching the template
+      // posture in templates/agent-thin/config.json.
       enabledAgents[name] = {
-        enabled: !isOpenAICompatible,
+        enabled: true,
         status: 'configured',
         ...(org ? { org } : {}),
       };
       writeFileSync(enabledPath, JSON.stringify(enabledAgents, null, 2) + '\n', 'utf-8');
-      console.log(`  Registered in enabled-agents.json (enabled=${!isOpenAICompatible})`);
+      console.log(`  Registered in enabled-agents.json (enabled=true)`);
     }
 
     console.log(`\n  Agent "${name}" created.`);
@@ -345,8 +347,8 @@ export const addAgentCommand = new Command('add-agent')
     if (isOpenAICompatible) {
       console.log(`    1. Edit ${join('orgs', org, 'agents', name, 'config.json')} — set "endpoint" and "model"`);
       console.log(`    2. Customize ${join('orgs', org, 'agents', name, 'SYSTEM_PROMPT.md')}`);
-      console.log(`    3. (PR2 prerequisite) Enable: cortextos enable ${name} --org ${org}`);
-      console.log(`       The agent stays disabled until you run enable — the daemon dispatch-allowlist guard refuses unsupported runtimes.\n`);
+      console.log(`    3. Enable: cortextos enable ${name} --org ${org}`);
+      console.log(`       (No Telegram .env required — openai-compatible agents skip the Telegram preflight.)\n`);
     } else {
       console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram settings`);
       console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);

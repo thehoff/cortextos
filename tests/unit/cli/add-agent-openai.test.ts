@@ -1,11 +1,9 @@
 /**
- * PR1 (openai-compatible runtime): `cortextos add-agent --template agent-thin`
- * must produce a properly-scaffolded openai-compatible agent with the
- * load-bearing PR1 safety properties:
+ * `cortextos add-agent --template agent-thin` must produce a properly-
+ * scaffolded openai-compatible agent with the following properties:
  *
- * 1. config.json: enabled=false, runtime=openai-compatible, endpoint+model present
- * 2. enabled-agents.json: enabled=false (dual-write — covers the
- *    `cortextos start <agent>` auto-register bypass at start.ts:157)
+ * 1. config.json: enabled=true, runtime=openai-compatible, endpoint+model present
+ * 2. enabled-agents.json: enabled=true (dispatch case + allowlist exist as of PR2)
  * 3. NO `.env` (no Telegram path)
  * 4. NO `.claude/skills/` (no Claude tooling)
  * 5. Template auto-infer: `--template agent-thin` implies `--runtime openai-compatible`
@@ -13,11 +11,11 @@
  *    uses the agent-thin template dir (matches the agent-codex precedent at
  *    add-agent.ts:102).
  *
- * Without these, PR1 isn't safe to merge before PR2 ships dispatch — the
- * daemon could try to start an unsupported runtime, registry-driven start
- * paths could bypass the disabled posture, etc. The dispatch-allowlist
- * guard in agent-process.ts is the second line of defense; this test pins
- * the first.
+ * History: PR1 wrote enabled=false in both files as a belt-and-braces measure
+ * because the daemon dispatch case for openai-compatible didn't yet exist
+ * (only the dispatch-allowlist guard). PR2 ships the OpenAICompatiblePTY
+ * adapter and adds 'openai-compatible' to the allowlist, so the agent can
+ * register enabled at creation time.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
@@ -89,7 +87,7 @@ describe('PR1: add-agent --template agent-thin / --runtime openai-compatible', (
     expect(existsSync(join(agentDir, '.claude'))).toBe(false);
   });
 
-  it('writes enabled=false and runtime=openai-compatible into config.json', async () => {
+  it('writes enabled=true and runtime=openai-compatible into config.json', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -101,13 +99,13 @@ describe('PR1: add-agent --template agent-thin / --runtime openai-compatible', (
     const cfgPath = join(tempRoot, 'orgs', 'testorg', 'agents', 'rag-cfg', 'config.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(cfg.runtime).toBe('openai-compatible');
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.enabled).toBe(true);
     expect(cfg.agent_name).toBe('rag-cfg');
     expect(typeof cfg.endpoint).toBe('string');
     expect(typeof cfg.model).toBe('string');
   });
 
-  it('writes enabled=false into enabled-agents.json (dual-write — covers cortextos start bypass)', async () => {
+  it('writes enabled=true into enabled-agents.json (matches config.json posture)', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -121,7 +119,7 @@ describe('PR1: add-agent --template agent-thin / --runtime openai-compatible', (
 
     const registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
     expect(registry['rag-reg']).toBeDefined();
-    expect(registry['rag-reg'].enabled).toBe(false);
+    expect(registry['rag-reg'].enabled).toBe(true);
     expect(registry['rag-reg'].org).toBe('testorg');
   });
 
@@ -171,7 +169,8 @@ describe('PR1: add-agent --template agent-thin / --runtime openai-compatible', (
     // with a non-thin template would copy a scaffold whose config.json /
     // skill layout doesn't match the openai-compatible runtime.
     // agent-codex specifically is excluded because its config.json has
-    // enabled:true hard-coded (PR1 needs enabled:false for openai-compatible).
+    // codex-app-server runtime hard-coded — pairing it with --runtime
+    // openai-compatible would copy a scaffold whose runtime conflicts.
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
