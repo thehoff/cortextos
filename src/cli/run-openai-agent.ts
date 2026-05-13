@@ -111,8 +111,16 @@ export function validateConfig(raw: unknown): RunnerConfig {
       if (typeof v !== 'string' || v.length === 0 || v.length > 512) {
         throw new Error(`config.json: headers[${JSON.stringify(k)}] must be a non-empty string of length <= 512`);
       }
-      if (/[\r\n\x00]/.test(v)) {
-        throw new Error(`config.json: headers[${JSON.stringify(k)}] must not contain CR, LF, or NUL`);
+      // Per RFC 7230 §3.2.6, a header field-value is HTAB + visible-ASCII
+      // (0x21-0x7E) + SP. Anything outside that range (CR, LF, NUL, other
+      // control chars, or bytes >= 0x7F) is rejected by undici's native
+      // fetch at call time, which would surface as an uncaught TypeError
+      // inside the message loop. Reject at boot instead so the failure
+      // surfaces as a clear FATAL config error (Codex pass-2 PR4-010).
+      if (/[^\t\x20-\x7e]/.test(v)) {
+        throw new Error(
+          `config.json: headers[${JSON.stringify(k)}] must contain only HTAB and printable ASCII (0x20-0x7E)`,
+        );
       }
     }
   }
