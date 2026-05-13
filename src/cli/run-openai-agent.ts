@@ -181,6 +181,34 @@ export function validateConfig(raw: unknown): RunnerConfig {
   return c as unknown as RunnerConfig;
 }
 
+/**
+ * Resolve the API key for this runner instance. Precedence:
+ *
+ *   1. cfg.api_key_env → process.env[cfg.api_key_env] — fail-fast if unset.
+ *   2. cfg.api_key (committed in config.json — fine for local LLMs that
+ *      ignore Authorization, dangerous for hosted providers).
+ *   3. process.env.OPENAI_API_KEY (back-compat fallback from PR3 era).
+ *
+ * Throwing here is caught by the same outer try/catch that wraps
+ * validateConfig at main() → emits FATAL: ... on stderr, exit 1.
+ *
+ * Read once at boot; rotating the secret requires restarting the agent.
+ * Documented in templates/agent-thin/AGENTS.md.
+ */
+export function resolveApiKey(cfg: RunnerConfig): string | undefined {
+  if (cfg.api_key_env !== undefined) {
+    const v = process.env[cfg.api_key_env];
+    if (!v) {
+      throw new Error(
+        `api_key_env "${cfg.api_key_env}" is unset or empty in the environment`,
+      );
+    }
+    return v;
+  }
+  if (cfg.api_key !== undefined) return cfg.api_key;
+  return process.env['OPENAI_API_KEY'];
+}
+
 function parseMemoryDirective(body: string): { threadId: string | null; cleaned: string } {
   const m = body.match(MEMORY_HEADER_RE);
   if (m) {
@@ -340,9 +368,11 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
 
     let cfg: RunnerConfig;
     let systemPrompt: string;
+    let apiKey: string | undefined;
     try {
       cfg = validateConfig(JSON.parse(readFileSync(configPath, 'utf-8')));
       systemPrompt = readFileSync(systemPromptPath, 'utf-8').trim();
+      apiKey = resolveApiKey(cfg);
     } catch (err) {
       process.stderr.write(`FATAL: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exit(1);
@@ -355,7 +385,6 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     const temperature = cfg.temperature ?? 0.2;
     const heartbeatMs = (cfg.heartbeat_interval_sec ?? 60) * 1000;
     const requestTimeoutMs = (cfg.request_timeout_sec ?? 120) * 1000;
-    const apiKey = cfg.api_key ?? process.env['OPENAI_API_KEY'];
 
     // Tool config
     const enabledTools = cfg.tools ?? [];
