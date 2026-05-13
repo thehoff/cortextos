@@ -151,73 +151,106 @@ export const enableAgentCommand = new Command('enable')
 
     const orgDir = options.org ? join(projectRoot, 'orgs', options.org) : null;
 
-    // Locate agent dir — try org-scoped path first, then flat agents/ fallback
-    let agentEnvPath: string | null = null;
+    // Locate the agent directory first — both the .env discovery (for the
+    // Telegram-cred preflight) and the runtime short-circuit (for
+    // openai-compatible agents that have no .env by design) need to know
+    // where the agent lives.
+    let agentDir: string | null = null;
     if (orgDir) {
-      const candidate = join(orgDir, 'agents', agent, '.env');
-      if (existsSync(candidate)) agentEnvPath = candidate;
+      const candidate = join(orgDir, 'agents', agent);
+      if (existsSync(candidate)) agentDir = candidate;
     }
-    if (!agentEnvPath) {
-      const candidate = join(projectRoot, 'agents', agent, '.env');
-      if (existsSync(candidate)) agentEnvPath = candidate;
-    }
-
-    if (!agentEnvPath) {
-      // BUG-035 fix: list the paths we actually checked so users can debug
-      // path-discovery failures without reading the source code.
-      console.error(`Error: No .env found for agent "${agent}". Checked:`);
-      if (orgDir) console.error(`  - ${join(orgDir, 'agents', agent, '.env')}`);
-      console.error(`  - ${join(projectRoot, 'agents', agent, '.env')}`);
-      console.error(`Project root: ${projectRoot}`);
-      console.error(`(Set CTX_FRAMEWORK_ROOT to override path discovery, or run from inside ~/cortextos.)`);
-      console.error(`Create the .env with BOT_TOKEN and CHAT_ID before enabling.`);
-      process.exit(1);
+    if (!agentDir) {
+      const candidate = join(projectRoot, 'agents', agent);
+      if (existsSync(candidate)) agentDir = candidate;
     }
 
-    const env = parseEnvFile(agentEnvPath);
-    const missing = (['BOT_TOKEN', 'CHAT_ID'] as const).filter(k => !env[k]);
-    if (missing.length > 0) {
-      console.error(`Error: .env for agent "${agent}" is missing required values: ${missing.join(', ')}`);
-      console.error(`Edit ${agentEnvPath} and set BOT_TOKEN and CHAT_ID before enabling.`);
-      process.exit(1);
+    // Read the agent's runtime field BEFORE the .env discovery block.
+    // openai-compatible agents are created without `.env` (no Telegram
+    // dependency), so any check that requires `.env` to exist would
+    // hard-fail enable for them. The check moves earlier than v1 had it —
+    // before .env discovery, not just before BOT/CHAT validation.
+    let runtime = 'claude-code';
+    if (agentDir) {
+      try {
+        const cfgPath = join(agentDir, 'config.json');
+        if (existsSync(cfgPath)) {
+          const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+          if (typeof cfg.runtime === 'string') runtime = cfg.runtime;
+        }
+      } catch { /* leave runtime at default 'claude-code' */ }
     }
 
-    // self-chat trap preflight: validate BOT_TOKEN + CHAT_ID against the live
-    // Telegram API before registering. Catches bad tokens, unreachable chats,
-    // bot-recipient configs, and the self_chat trap (CHAT_ID == bot's own
-    // user id) BEFORE the agent boots up on a silently broken config. Without
-    // this, the first real sendMessage call fails with a cryptic 401/400/403
-    // buried in the agent's stdout log, and the dashboard happily shows the
-    // agent as alive.
-    //
-    // Hard-fails on config-level reasons (bad_token, chat_not_found,
-    // bot_recipient, self_chat). Warns but does not block on transient
-    // reasons (network_error, rate_limited) so offline enable and burst
-    // enables during the morning cascade still succeed.
-    try {
-      const telegramApi = new TelegramAPI(env.BOT_TOKEN);
-      const validation = await telegramApi.validateCredentials(env.CHAT_ID);
-      if (validation.ok) {
-        const label = validation.chatTitle ? ` (${validation.chatTitle})` : '';
-        console.log(
-          `Telegram validated: bot=@${validation.botUsername} chat=${env.CHAT_ID} type=${validation.chatType}${label}`,
-        );
-      } else if (validation.reason === 'network_error' || validation.reason === 'rate_limited') {
-        console.error(`Warning: could not verify Telegram credentials (${validation.reason}).`);
-        console.error(`  ${formatValidateError(validation)}`);
-        console.error('  Continuing anyway — re-run enable after connectivity is restored to confirm.');
-      } else {
-        console.error(`Error: Telegram credentials for agent "${agent}" failed validation.`);
-        console.error(`  ${formatValidateError(validation)}`);
-        console.error(`  Edit ${agentEnvPath} and re-run: cortextos enable ${agent}`);
+    if (runtime !== 'openai-compatible') {
+      let agentEnvPath: string | null = null;
+      if (orgDir) {
+        const candidate = join(orgDir, 'agents', agent, '.env');
+        if (existsSync(candidate)) agentEnvPath = candidate;
+      }
+      if (!agentEnvPath) {
+        const candidate = join(projectRoot, 'agents', agent, '.env');
+        if (existsSync(candidate)) agentEnvPath = candidate;
+      }
+
+      if (!agentEnvPath) {
+        // BUG-035 fix: list the paths we actually checked so users can debug
+        // path-discovery failures without reading the source code.
+        console.error(`Error: No .env found for agent "${agent}". Checked:`);
+        if (orgDir) console.error(`  - ${join(orgDir, 'agents', agent, '.env')}`);
+        console.error(`  - ${join(projectRoot, 'agents', agent, '.env')}`);
+        console.error(`Project root: ${projectRoot}`);
+        console.error(`(Set CTX_FRAMEWORK_ROOT to override path discovery, or run from inside ~/cortextos.)`);
+        console.error(`Create the .env with BOT_TOKEN and CHAT_ID before enabling.`);
         process.exit(1);
       }
-    } catch (err) {
-      // Defensive: validateCredentials should never throw, but if it does,
-      // fall through with a warning rather than blocking enable on a bug in
-      // the validator itself.
-      console.error(`Warning: Telegram credential validation crashed: ${err instanceof Error ? err.message : String(err)}`);
-      console.error('  Continuing enable. Investigate the validator if this recurs.');
+
+      const env = parseEnvFile(agentEnvPath);
+      const missing = (['BOT_TOKEN', 'CHAT_ID'] as const).filter(k => !env[k]);
+      if (missing.length > 0) {
+        console.error(`Error: .env for agent "${agent}" is missing required values: ${missing.join(', ')}`);
+        console.error(`Edit ${agentEnvPath} and set BOT_TOKEN and CHAT_ID before enabling.`);
+        process.exit(1);
+      }
+
+      // self-chat trap preflight: validate BOT_TOKEN + CHAT_ID against the live
+      // Telegram API before registering. Catches bad tokens, unreachable chats,
+      // bot-recipient configs, and the self_chat trap (CHAT_ID == bot's own
+      // user id) BEFORE the agent boots up on a silently broken config. Without
+      // this, the first real sendMessage call fails with a cryptic 401/400/403
+      // buried in the agent's stdout log, and the dashboard happily shows the
+      // agent as alive.
+      //
+      // Hard-fails on config-level reasons (bad_token, chat_not_found,
+      // bot_recipient, self_chat). Warns but does not block on transient
+      // reasons (network_error, rate_limited) so offline enable and burst
+      // enables during the morning cascade still succeed.
+      try {
+        const telegramApi = new TelegramAPI(env.BOT_TOKEN);
+        const validation = await telegramApi.validateCredentials(env.CHAT_ID);
+        if (validation.ok) {
+          const label = validation.chatTitle ? ` (${validation.chatTitle})` : '';
+          console.log(
+            `Telegram validated: bot=@${validation.botUsername} chat=${env.CHAT_ID} type=${validation.chatType}${label}`,
+          );
+        } else if (validation.reason === 'network_error' || validation.reason === 'rate_limited') {
+          console.error(`Warning: could not verify Telegram credentials (${validation.reason}).`);
+          console.error(`  ${formatValidateError(validation)}`);
+          console.error('  Continuing anyway — re-run enable after connectivity is restored to confirm.');
+        } else {
+          console.error(`Error: Telegram credentials for agent "${agent}" failed validation.`);
+          console.error(`  ${formatValidateError(validation)}`);
+          console.error(`  Edit ${agentEnvPath} and re-run: cortextos enable ${agent}`);
+          process.exit(1);
+        }
+      } catch (err) {
+        // Defensive: validateCredentials should never throw, but if it does,
+        // fall through with a warning rather than blocking enable on a bug in
+        // the validator itself.
+        console.error(`Warning: Telegram credential validation crashed: ${err instanceof Error ? err.message : String(err)}`);
+        console.error('  Continuing enable. Investigate the validator if this recurs.');
+      }
+    } else {
+      console.log(`Runtime: openai-compatible (skipping Telegram-cred preflight)`);
     }
 
     const agents = readEnabledAgents(options.instance);
