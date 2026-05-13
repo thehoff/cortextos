@@ -14,6 +14,9 @@ import {
   resolveExtraHeaders,
   type RunnerConfig,
 } from '../openai-runner/config.js';
+import { bootMcpManager } from '../openai-runner/mcp/manager.js';
+import type { McpManager } from '../openai-runner/mcp/manager.js';
+import { TOOL_REGISTRY } from '../openai-runner/tools/index.js';
 
 // Re-export for back-compat with tests that import from this module.
 export { validateConfig, resolveApiKey, resolveExtraHeaders };
@@ -277,21 +280,75 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // emit) — see PR2 Codex P2-1 fix.
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let shuttingDown = false;
+    // PR5: mcpManager populated AFTER bootMcpManager resolves. The shutdown
+    // handler can race with boot — onBeforeFirstSpawn handoff gives the
+    // signal trap access to a still-booting manager via partialMcpShutdown.
+    let mcpManager: McpManager | undefined;
+    let partialMcpShutdown: (() => Promise<void>) | undefined;
     const shutdown = (): void => {
       if (shuttingDown) return;
       shuttingDown = true;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       safeUpdateHeartbeat('stopping', currentTask);
       safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
+      // Best-effort MCP teardown. We don't await because shutdown() is sync
+      // (called from signal handlers); the manager's internal 5s budget
+      // bounds the wait. PR5 Codex pass-1 PR5-002: partialMcpShutdown is set
+      // BEFORE the first spawn so an early SIGTERM still hits it.
+      const closer = mcpManager?.shutdown ?? partialMcpShutdown;
+      if (closer) {
+        void closer().catch(() => undefined);
+      }
       process.exit(0);
     };
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
 
+    // PR5: boot MCP servers between config-load and READY. Failures FATAL.
+    if (cfg.mcp_servers && cfg.mcp_servers.length > 0) {
+      const mcpBootTimeoutMs = (cfg.mcp_boot_timeout_sec ?? 30) * 1000;
+      const mcpDefaultToolTimeoutMs = (cfg.mcp_tool_timeout_sec ?? 30) * 1000;
+      try {
+        mcpManager = await bootMcpManager({
+          specs: cfg.mcp_servers,
+          cwd: agentDir,
+          bootTimeoutMs: mcpBootTimeoutMs,
+          defaultToolTimeoutMs: mcpDefaultToolTimeoutMs,
+          builtinToolNames: new Set(Object.keys(TOOL_REGISTRY)),
+          runnerEnv: process.env,
+          onBeforeFirstSpawn: (handle) => { partialMcpShutdown = handle.shutdown; },
+        });
+        // Phase-2: any tools[] entry that was syntactically mcp__<server>__<tool>
+        // at config-validation time must now exist in the route table. A typo
+        // in the tool-name portion (right shape, wrong tool) fails here.
+        for (const enabled of enabledTools) {
+          if (enabled.startsWith('mcp__') && !(enabled in TOOL_REGISTRY) && !mcpManager.routes.has(enabled)) {
+            throw new Error(
+              `config.json: "tools" lists "${enabled}" but no MCP server advertises that tool. ` +
+              `Available MCP tools: ${[...mcpManager.routes.keys()].join(', ') || '(none)'}`,
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`FATAL: MCP boot failed: ${msg}\n`);
+        try { await mcpManager?.shutdown(); } catch { /* */ }
+        try { await partialMcpShutdown?.(); } catch { /* */ }
+        process.exit(1);
+        return;
+      }
+    }
+
     safeUpdateHeartbeat('idle', '');
     safeLogEvent('milestone', 'agent_online', 'info', {
       agent: agentName, model, endpoint, tools: enabledTools,
       ...(cfg.provider ? { provider: cfg.provider } : {}),
+      ...(mcpManager
+        ? {
+          mcp_servers: [...mcpManager.clients.keys()],
+          mcp_tools_count: mcpManager.routes.size,
+        }
+        : {}),
     });
 
     process.stdout.write('[openai-runner] READY\n');
@@ -327,6 +384,7 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
               toolsSupported,
               extraHeaders,
               enabledToolNames: enabledTools,
+              mcpManager,
               defaultToolTimeoutMs,
               toolTimeoutsMs,
               maxIterations,

@@ -11,6 +11,9 @@
  * cross-reference validation.
  */
 import { TOOL_REGISTRY } from './tools/index.js';
+import type { McpServerSpec } from './mcp/types.js';
+
+export type { McpServerSpec };
 
 export interface RunnerConfig {
   endpoint: string;
@@ -36,12 +39,22 @@ export interface RunnerConfig {
   tool_timeouts_sec?: Record<string, number>;
   /** Cap on bus_send_message calls per inbox message. Default 3. */
   tool_bus_send_budget?: number;
+  /** MCP servers this agent spawns at boot. */
+  mcp_servers?: McpServerSpec[];
+  /** Total boot-timeout budget (seconds) for ALL MCP servers, parallel. Default 30. */
+  mcp_boot_timeout_sec?: number;
+  /** Default per-tool timeout (seconds) for MCP-discovered tools. Default 30. */
+  mcp_tool_timeout_sec?: number;
 }
 
 const ENV_VAR_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
 const HTTP_HEADER_NAME_RE = /^[A-Za-z][A-Za-z0-9-]*$/;
 const PROVIDER_TAG_RE = /^[a-z][a-z0-9-]*$/;
 const RESERVED_HEADER_NAMES_LOWER = new Set(['content-type', 'authorization']);
+const MCP_SERVER_NAME_RE = /^[a-z][a-z0-9-]*$/;
+/** Syntactic shape for an mcp__<server>__<tool> qualified tool name in tools[]. */
+const MCP_QUALIFIED_TOOL_NAME_RE = /^mcp__[a-z][a-z0-9_]*__[a-zA-Z][a-zA-Z0-9_-]*$/;
+const ENV_VAR_REF_RE = /^\$([A-Z][A-Z0-9_]*)$/;
 
 export function validateConfig(raw: unknown): RunnerConfig {
   if (typeof raw !== 'object' || raw === null) {
@@ -120,17 +133,115 @@ export function validateConfig(raw: unknown): RunnerConfig {
   if (c.request_timeout_sec !== undefined && (typeof c.request_timeout_sec !== 'number' || c.request_timeout_sec < 1)) {
     throw new Error('config.json: "request_timeout_sec" must be a positive number');
   }
+  // mcp_servers validation runs BEFORE tools[] validation so the
+  // phase-1 syntactic check can reference the configured server names.
+  const declaredMcpServerNames = new Set<string>();
+  if (c.mcp_servers !== undefined) {
+    if (!Array.isArray(c.mcp_servers)) {
+      throw new Error('config.json: "mcp_servers" must be an array');
+    }
+    for (let i = 0; i < c.mcp_servers.length; i++) {
+      const raw = c.mcp_servers[i];
+      if (typeof raw !== 'object' || raw === null) {
+        throw new Error(`config.json: mcp_servers[${i}] must be an object`);
+      }
+      const s = raw as Record<string, unknown>;
+      if (typeof s.name !== 'string' || s.name.length === 0 || s.name.length > 32) {
+        throw new Error(`config.json: mcp_servers[${i}].name must be a non-empty string of length <= 32`);
+      }
+      if (!MCP_SERVER_NAME_RE.test(s.name)) {
+        throw new Error(`config.json: mcp_servers[${i}].name "${s.name}" must match /^[a-z][a-z0-9-]*$/`);
+      }
+      if (declaredMcpServerNames.has(s.name)) {
+        throw new Error(`config.json: mcp_servers contains duplicate name "${s.name}"`);
+      }
+      declaredMcpServerNames.add(s.name);
+      if (typeof s.command !== 'string' || s.command.length === 0 || s.command.length > 256) {
+        throw new Error(`config.json: mcp_servers["${s.name}"].command must be a non-empty string of length <= 256`);
+      }
+      if (s.args !== undefined) {
+        if (!Array.isArray(s.args) || s.args.length > 32) {
+          throw new Error(`config.json: mcp_servers["${s.name}"].args must be an array of length <= 32`);
+        }
+        for (const a of s.args) {
+          if (typeof a !== 'string' || a.length > 1024 || /\x00/.test(a)) {
+            throw new Error(`config.json: mcp_servers["${s.name}"].args entries must be strings of length <= 1024 with no NUL`);
+          }
+        }
+      }
+      if (s.env !== undefined) {
+        if (typeof s.env !== 'object' || s.env === null || Array.isArray(s.env)) {
+          throw new Error(`config.json: mcp_servers["${s.name}"].env must be an object`);
+        }
+        for (const [k, v] of Object.entries(s.env)) {
+          if (!ENV_VAR_NAME_RE.test(k)) {
+            throw new Error(`config.json: mcp_servers["${s.name}"].env key "${k}" must match /^[A-Z][A-Z0-9_]*$/`);
+          }
+          if (typeof v !== 'string' || v.length > 4096 || /\x00/.test(v)) {
+            throw new Error(`config.json: mcp_servers["${s.name}"].env["${k}"] must be a string of length <= 4096 with no NUL`);
+          }
+        }
+      }
+      if (s.cwd !== undefined && (typeof s.cwd !== 'string' || s.cwd.length === 0 || s.cwd.length > 1024)) {
+        throw new Error(`config.json: mcp_servers["${s.name}"].cwd must be a non-empty string of length <= 1024`);
+      }
+      if (s.tool_timeout_sec !== undefined && (typeof s.tool_timeout_sec !== 'number' || s.tool_timeout_sec < 1 || s.tool_timeout_sec > 600)) {
+        throw new Error(`config.json: mcp_servers["${s.name}"].tool_timeout_sec must be a number in [1, 600]`);
+      }
+      if (s.env_inherit !== undefined && typeof s.env_inherit !== 'boolean') {
+        throw new Error(`config.json: mcp_servers["${s.name}"].env_inherit must be a boolean`);
+      }
+    }
+  }
+  if (c.mcp_boot_timeout_sec !== undefined && (typeof c.mcp_boot_timeout_sec !== 'number' || c.mcp_boot_timeout_sec < 1 || c.mcp_boot_timeout_sec > 600)) {
+    throw new Error('config.json: "mcp_boot_timeout_sec" must be a number in [1, 600]');
+  }
+  if (c.mcp_tool_timeout_sec !== undefined && (typeof c.mcp_tool_timeout_sec !== 'number' || c.mcp_tool_timeout_sec < 1 || c.mcp_tool_timeout_sec > 600)) {
+    throw new Error('config.json: "mcp_tool_timeout_sec" must be a number in [1, 600]');
+  }
   if (c.tools !== undefined) {
     if (!Array.isArray(c.tools) || c.tools.some(t => typeof t !== 'string')) {
       throw new Error('config.json: "tools" must be an array of strings');
     }
-    // Codex M6: fail fast on unknown tool names so a typo doesn't silently
-    // ship a tool-less agent that the operator thinks has tools.
-    const unknown = (c.tools as string[]).filter(t => !(t in TOOL_REGISTRY));
+    // Codex M6 + PR5-003: phase-1 syntactic check. A name is valid here if it
+    // EITHER references a builtin tool OR matches the mcp__<server>__<tool>
+    // shape AND points at a declared mcp_servers entry. Existence of the
+    // tool on the running MCP server is phase-2, checked at boot after the
+    // server is up. The error preserves PR3's wording for builtin typos.
+    const unknown: string[] = [];
+    for (const name of c.tools as string[]) {
+      if (name in TOOL_REGISTRY) continue;
+      const mcpMatch = name.match(/^mcp__([a-z][a-z0-9_]*)__/);
+      if (mcpMatch) {
+        // Convert the underscored server-name back to the kebab form used
+        // in mcp_servers[].name (manager.ts replaces hyphens with underscores
+        // when building qualified names). Either direction is acceptable
+        // here for shape — we only check that the syntactic form is valid
+        // and SOME declared server matches.
+        if (!MCP_QUALIFIED_TOOL_NAME_RE.test(name)) {
+          unknown.push(name);
+          continue;
+        }
+        const underscoredName = mcpMatch[1]!;
+        // Check against both raw and hyphen-flipped forms (mcp__foo_bar__x
+        // could come from server name "foo-bar" or "foo_bar"). The server
+        // name regex disallows underscores in mcp_servers[].name so the
+        // only way to match an underscored prefix is via the hyphen-flip.
+        const kebab = underscoredName.replace(/_/g, '-');
+        if (!declaredMcpServerNames.has(underscoredName) && !declaredMcpServerNames.has(kebab)) {
+          unknown.push(name);
+        }
+        continue;
+      }
+      unknown.push(name);
+    }
     if (unknown.length > 0) {
       throw new Error(
         `config.json: unknown tool(s) in "tools": ${unknown.join(', ')}. ` +
-        `Available: ${Object.keys(TOOL_REGISTRY).join(', ')}`,
+        `Available builtins: ${Object.keys(TOOL_REGISTRY).join(', ')}` +
+        (declaredMcpServerNames.size > 0
+          ? `; declared MCP servers: ${[...declaredMcpServerNames].join(', ')} (use mcp__<server>__<tool> form, where <server> hyphens become underscores)`
+          : ''),
       );
     }
   }
@@ -148,10 +259,15 @@ export function validateConfig(raw: unknown): RunnerConfig {
       throw new Error('config.json: "tool_timeouts_sec" must be an object of tool-name → seconds');
     }
     for (const [k, v] of Object.entries(c.tool_timeouts_sec)) {
-      if (!(k in TOOL_REGISTRY)) {
+      // PR5: accept either builtin names or mcp__-shaped qualified names.
+      // Phase-2 validation at boot covers whether the MCP tool actually
+      // exists on the running server.
+      const looksLikeMcp = k.startsWith('mcp__') && MCP_QUALIFIED_TOOL_NAME_RE.test(k);
+      if (!(k in TOOL_REGISTRY) && !looksLikeMcp) {
         throw new Error(
           `config.json: tool_timeouts_sec key "${k}" is not a known tool. ` +
-          `Available: ${Object.keys(TOOL_REGISTRY).join(', ')}`,
+          `Available builtins: ${Object.keys(TOOL_REGISTRY).join(', ')}; ` +
+          `MCP tools use the mcp__<server>__<tool> form.`,
         );
       }
       if (typeof v !== 'number' || !Number.isFinite(v) || v < 1) {
