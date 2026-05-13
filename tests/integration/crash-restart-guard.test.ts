@@ -9,7 +9,7 @@
  * effectively do) all route through the guard. No retry path can
  * accidentally bypass it.
  *
- * Why not exercise the real setTimeout: in PR1, openai-compatible is OFF
+ * Why not exercise the real setTimeout: in PR1, unsupported-runtime is OFF
  * the allowlist, so the first start() rejects immediately and crash
  * recovery never schedules a retry. The meaningful invariant is that the
  * guard catches every start() invocation, which is what we verify here.
@@ -103,7 +103,7 @@ describe('PR1 integration: crash-restart path routes through the guard', () => {
     const ap = new AgentProcess(
       'crash-test',
       mockEnv,
-      { runtime: 'openai-compatible' } as any,
+      { runtime: 'unsupported-runtime' } as any,
       (msg) => logCalls.push(msg),
     );
 
@@ -117,7 +117,7 @@ describe('PR1 integration: crash-restart path routes through the guard', () => {
     expect(mockClaudePty.spawn).not.toHaveBeenCalled();
     expect(ap.getStatus().status).toBe('stopped'); // never moved to 'starting' / 'running'
 
-    const rejections = logCalls.filter(m => /Refusing to dispatch.*openai-compatible/.test(m));
+    const rejections = logCalls.filter(m => /Refusing to dispatch.*unsupported-runtime/.test(m));
     expect(rejections.length).toBe(3);
   });
 
@@ -128,7 +128,7 @@ describe('PR1 integration: crash-restart path routes through the guard', () => {
     const ap = new AgentProcess(
       'crash-counter',
       mockEnv,
-      { runtime: 'openai-compatible' } as any,
+      { runtime: 'unsupported-runtime' } as any,
     );
 
     await ap.start();

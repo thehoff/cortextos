@@ -11,7 +11,7 @@
  * spawn path.
  *
  * This test exercises that path directly: call sessionRefresh() on an
- * openai-compatible agent and verify the start() half is intercepted,
+ * unsupported-runtime agent and verify the start() half is intercepted,
  * the stop() half is harmless (no PTY to stop), and sessionRefresh
  * returns cleanly without leaving the agent in a half-started state.
  */
@@ -103,7 +103,7 @@ describe('PR1 integration: session refresh routes through the guard', () => {
     const ap = new AgentProcess(
       'refresh-test',
       mockEnv,
-      { runtime: 'openai-compatible' } as any,
+      { runtime: 'unsupported-runtime' } as any,
       (msg) => logCalls.push(msg),
     );
 
@@ -111,7 +111,7 @@ describe('PR1 integration: session refresh routes through the guard', () => {
 
     expect(mockClaudePty.spawn).not.toHaveBeenCalled();
     expect(mockClaudePty.kill).not.toHaveBeenCalled(); // no PTY to kill — stop() was a no-op
-    expect(logCalls.some(m => /Refusing to dispatch.*openai-compatible.*not in allowlist/.test(m))).toBe(true);
+    expect(logCalls.some(m => /Refusing to dispatch.*unsupported-runtime.*not in allowlist/.test(m))).toBe(true);
     // sessionRefresh logs both "Session refresh" and "Session refreshed" — verify it ran cleanly through both phases
     expect(logCalls.some(m => /Session refresh \(--continue restart\)/.test(m))).toBe(true);
     expect(logCalls.some(m => /Session refreshed/.test(m))).toBe(true);
@@ -121,7 +121,7 @@ describe('PR1 integration: session refresh routes through the guard', () => {
     const ap = new AgentProcess(
       'refresh-clean',
       mockEnv,
-      { runtime: 'openai-compatible' } as any,
+      { runtime: 'unsupported-runtime' } as any,
     );
 
     await ap.sessionRefresh();

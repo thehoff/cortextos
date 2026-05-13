@@ -1,7 +1,7 @@
 /**
  * PR1 integration: even when both layers of "enabled" are bypassed —
  * `config.json enabled:true` AND `enabled-agents.json enabled:true` for
- * an openai-compatible agent — the dispatch-allowlist guard at the top of
+ * an unsupported-runtime agent — the dispatch-allowlist guard at the top of
  * AgentProcess.start() refuses to spawn a PTY.
  *
  * Why this matters: the bypass is real and reachable via
@@ -16,7 +16,7 @@
  *
  * The dispatch-allowlist guard is the load-bearing reason PR1 is safe to
  * merge alone. If `enabled:false` were the only defense, this bypass would
- * let an openai-compatible agent dispatch through AgentPTY (Claude default)
+ * let an unsupported-runtime agent dispatch through AgentPTY (Claude default)
  * and crash.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -101,7 +101,7 @@ beforeEach(() => {
 });
 
 describe('PR1 integration: cortextos start bypass refused by dispatch guard', () => {
-  it('refuses openai-compatible dispatch even with config.json enabled:true (registry bypass simulation)', async () => {
+  it('refuses unsupported-runtime dispatch even with config.json enabled:true (registry bypass simulation)', async () => {
     // Simulates the post-bypass state: both gates of "enabled" were
     // overridden by cortextos start's auto-register + IPC path. The agent
     // should STILL refuse to start because the guard is the third defense.
@@ -109,7 +109,7 @@ describe('PR1 integration: cortextos start bypass refused by dispatch guard', ()
     const ap = new AgentProcess(
       'rag-bypass',
       mockEnv,
-      { runtime: 'openai-compatible', enabled: true } as any,
+      { runtime: 'unsupported-runtime', enabled: true } as any,
       (msg) => logCalls.push(msg),
     );
 
@@ -117,7 +117,7 @@ describe('PR1 integration: cortextos start bypass refused by dispatch guard', ()
 
     expect(mockClaudePty.spawn).not.toHaveBeenCalled();
     expect(ap.getStatus().status).toBe('stopped');
-    expect(logCalls.some(m => /Refusing to dispatch.*openai-compatible.*not in allowlist/.test(m))).toBe(true);
+    expect(logCalls.some(m => /Refusing to dispatch.*unsupported-runtime.*not in allowlist/.test(m))).toBe(true);
   });
 
   it('the rejection is deterministic — calling start() three times produces three rejections, never a spawn', async () => {
@@ -127,7 +127,7 @@ describe('PR1 integration: cortextos start bypass refused by dispatch guard', ()
     const ap = new AgentProcess(
       'rag-persistent',
       mockEnv,
-      { runtime: 'openai-compatible', enabled: true } as any,
+      { runtime: 'unsupported-runtime', enabled: true } as any,
       (msg) => logCalls.push(msg),
     );
 
@@ -136,7 +136,7 @@ describe('PR1 integration: cortextos start bypass refused by dispatch guard', ()
     await ap.start();
 
     expect(mockClaudePty.spawn).not.toHaveBeenCalled();
-    const rejections = logCalls.filter(m => /Refusing to dispatch.*openai-compatible/.test(m));
+    const rejections = logCalls.filter(m => /Refusing to dispatch.*unsupported-runtime/.test(m));
     expect(rejections.length).toBe(3);
   });
 });

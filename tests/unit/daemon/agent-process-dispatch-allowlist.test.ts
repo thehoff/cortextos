@@ -1,20 +1,21 @@
 /**
- * PR1 (openai-compatible runtime): dispatch-allowlist guard at the TOP of
- * AgentProcess.start() refuses any runtime not in
- * {claude-code, codex-app-server, hermes}.
+ * Dispatch-allowlist guard at the TOP of AgentProcess.start() refuses any
+ * runtime not in {claude-code, codex-app-server, hermes, openai-compatible}.
  *
  * Why this guard exists: AgentConfig.runtime is type-optional (legacy Claude
  * agents on disk have no runtime field) and the dispatch ternary at
- * agent-process.ts:117-121 routes anything-not-Hermes-not-Codex to AgentPTY.
- * Without the guard, PR1 adding 'openai-compatible' to the type union would
- * silently dispatch openai-compatible agents through the Claude path.
+ * agent-process.ts:117-121 routes anything-not-Hermes-not-Codex-not-thin to
+ * AgentPTY. Without the guard, an unknown runtime string in config.json
+ * would silently dispatch through the Claude path.
  *
  * The guard sits at start() because that's the single chokepoint for all
  * five spawn paths (cold start, IPC start-agent, CLI cortextos start, crash
  * auto-restart, session refresh). One check covers them all.
  *
- * PR2 will add 'openai-compatible' to the allowlist alongside the
- * OpenAICompatiblePTY dispatch branch.
+ * History: PR1 introduced the guard with openai-compatible deliberately OFF
+ * the allowlist (the type union was extended but no PTY dispatch case
+ * existed yet). PR2 added 'openai-compatible' to the allowlist alongside
+ * the OpenAICompatiblePTY dispatch branch.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -38,6 +39,7 @@ function makeMockPty() {
 const mockClaudePty = makeMockPty();
 const mockCodexPty = makeMockPty();
 const mockHermesPty = makeMockPty();
+const mockOpenAIPty = makeMockPty();
 
 vi.mock('../../../src/pty/agent-pty.js', () => ({
   AgentPTY: function AgentPTY() { return mockClaudePty; },
@@ -50,6 +52,10 @@ vi.mock('../../../src/pty/codex-app-server-pty.js', () => ({
 vi.mock('../../../src/pty/hermes-pty.js', () => ({
   HermesPTY: function HermesPTY() { return mockHermesPty; },
   hermesDbExists: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../../../src/pty/openai-compatible-pty.js', () => ({
+  OpenAICompatiblePTY: function OpenAICompatiblePTY() { return mockOpenAIPty; },
 }));
 
 vi.mock('../../../src/pty/inject.js', () => ({
@@ -105,19 +111,17 @@ beforeEach(() => {
   mockClaudePty.spawn.mockClear();
   mockCodexPty.spawn.mockClear();
   mockHermesPty.spawn.mockClear();
+  mockOpenAIPty.spawn.mockClear();
 });
 
 describe('AgentProcess dispatch-allowlist guard', () => {
-  it('refuses runtime=openai-compatible (PR1 baseline — off the allowlist until PR2)', async () => {
-    const logCalls: string[] = [];
-    const ap = new AgentProcess('specimen', mockEnv, { runtime: 'openai-compatible' } as any, (msg) => logCalls.push(msg));
-
+  it('passes runtime=openai-compatible through to OpenAICompatiblePTY (allowlist hit, PR2)', async () => {
+    const ap = new AgentProcess('specimen', mockEnv, { runtime: 'openai-compatible' } as any);
     await ap.start();
-
+    expect(mockOpenAIPty.spawn).toHaveBeenCalled();
     expect(mockClaudePty.spawn).not.toHaveBeenCalled();
     expect(mockCodexPty.spawn).not.toHaveBeenCalled();
     expect(mockHermesPty.spawn).not.toHaveBeenCalled();
-    expect(logCalls.some(m => /Refusing to dispatch.*openai-compatible.*not in allowlist/.test(m))).toBe(true);
   });
 
   it('refuses a genuinely unknown runtime via the same code path', async () => {
