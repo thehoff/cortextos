@@ -6,7 +6,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { McpServerCreateDialog } from './mcp-server-create-dialog';
 
 interface ServerEntry {

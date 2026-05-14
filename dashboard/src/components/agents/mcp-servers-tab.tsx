@@ -9,7 +9,7 @@
  * (with confirmation dialog per the v0.2 plan) — both surfacing the
  * restart command from the API response (Codex pass-1 PR6-005).
  */
-import { useCallback, useEffect, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -211,7 +211,19 @@ function WireForm({
   onSubmit: (name: string) => void;
 }): React.ReactElement {
   const [selected, setSelected] = useState<string>(candidates[0]?.name ?? '');
-  const chosen = candidates.find(c => c.name === selected);
+  // Post-review fix: when candidates changes (e.g. after a successful wire
+  // refreshes the list), `selected` can become stale — pointing at a name
+  // no longer in the dropdown. The Select then shows nothing matching and
+  // a click on Wire fires a 409. Reset to the first available candidate
+  // when the current selection disappears from the list.
+  useEffect(() => {
+    if (selected && !candidates.some(c => c.name === selected)) {
+      setSelected(candidates[0]?.name ?? '');
+    } else if (!selected && candidates.length > 0) {
+      setSelected(candidates[0]!.name);
+    }
+  }, [candidates, selected]);
+  const chosen = useMemo(() => candidates.find(c => c.name === selected), [candidates, selected]);
   return (
     <div className="space-y-2">
       <div className="flex items-end gap-2">
@@ -256,7 +268,17 @@ function UnwireDialog({
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger disabled={disabled}>Unwire</DialogTrigger>
+      {/* base-ui's DialogTrigger renders as an HTML button by default
+          (unstyled). Use `render` to swap in the dashboard's Button so
+          the trigger matches the styled UI elsewhere. */}
+      <DialogTrigger
+        disabled={disabled}
+        render={() => (
+          <Button variant="outline" size="sm" disabled={disabled}>
+            Unwire
+          </Button>
+        )}
+      />
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Unwire {serverName}?</DialogTitle>
