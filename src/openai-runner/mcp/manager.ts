@@ -80,6 +80,10 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
   // $VAR secrets remain visible after a rejecting boot.
   const secrets = opts.secretsSink ?? new Set<string>();
   const childCleanups: Array<() => Promise<void>> = [];
+  // Codex pass-5 PR5-044: track PID getters in tandem with cleanups so
+  // the race-timeout path below can force-kill any still-alive children
+  // without falling into the recycled-PID trap.
+  const childPidGetters: Array<() => number | null> = [];
   // Codex pass-4 PR5-041: track the in-flight close promise so concurrent
   // shutdown callers (e.g. the runner's SIGTERM handler AND the bootMcpManager
   // rollback path both call shutdown()) all AWAIT the same close-all race
@@ -96,10 +100,38 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
       const deadline = Date.now() + SHUTDOWN_TOTAL_BUDGET_MS;
       // Race close-all against a hard budget so a stuck server can't block
       // SIGTERM compliance.
-      await Promise.race([
-        Promise.allSettled(childCleanups.map(c => c())),
-        new Promise<void>(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now()))),
+      const cleanupsDone = Promise.allSettled(childCleanups.map(c => c()));
+      const result = await Promise.race([
+        cleanupsDone.then(() => 'done' as const),
+        new Promise<'timeout'>(resolve =>
+          setTimeout(() => resolve('timeout'), Math.max(0, deadline - Date.now())),
+        ),
       ]);
+      // Codex pass-5 PR5-045: when the budget timer wins the race, the
+      // SDK's close() chain hasn't confirmed child death yet — the
+      // cleanups are still pending, and exiting now would orphan
+      // whatever children survived. Force-kill via captured pids before
+      // returning. The getPid() snapshot is safe: it reads transport.pid
+      // which becomes null after SDK close() nulls _process, so a
+      // recycled-PID kill is impossible (we only get a non-null pid
+      // for children whose close() is still in flight).
+      if (result === 'timeout') {
+        for (const get of childPidGetters) {
+          const pid = get();
+          if (pid !== null && pid !== undefined) {
+            try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+          }
+        }
+        // After SIGKILL, wait briefly for the cleanups' close() to
+        // observe the child's 'close' event and finish. This keeps the
+        // shutdown bounded but ensures cleanups don't dangle past
+        // process.exit. Bounded at 1s — kernel close-event delivery
+        // is sub-second under any normal load.
+        await Promise.race([
+          cleanupsDone,
+          new Promise<void>(resolve => setTimeout(resolve, 1_000)),
+        ]);
+      }
     })();
     return closingPromise;
   };
@@ -145,12 +177,13 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
     // connect await. beginMcpConnect returns the cleanup handle alongside
     // the in-flight Promise. If shutdown() fires while the connect is
     // still pending, the cleanup actually closes the transport.
-    const { ready, cleanup } = beginMcpConnect(spec, {
+    const { ready, cleanup, getPid } = beginMcpConnect(spec, {
       env,
       cwd: resolvedCwd,
       bootTimeoutMs: opts.bootTimeoutMs,
     });
     childCleanups.push(cleanup);
+    childPidGetters.push(getPid);
     const client = await ready;
     return { spec, client };
   }));

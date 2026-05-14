@@ -296,7 +296,18 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // rejects mid-flight — the catch path below redacts the FATAL stderr
     // line through this set.
     const collectedMcpSecrets = new Set<string>();
-    const SHUTDOWN_OUTER_BUDGET_MS = 5_000;
+    // PR5-024 + Codex pass-5 PR5-045: the runner's outer shutdown budget
+    // is layered ABOVE the manager's. Manager: 5s race vs cleanups, then
+    // if the timer wins it SIGKILLs captured pids + waits up to 1s for
+    // cleanups to drain, so manager.shutdown() can take ~6s worst-case.
+    // The runner outer race exists as defense-in-depth in case the
+    // manager itself wedges; it must exceed the manager's worst case
+    // so the force-kill path actually gets to fire before exit. PLAN §10
+    // says "5-second outer race" but the spirit is "stuck MCP server
+    // can't prevent SIGTERM compliance" — 10s with documented layering
+    // honors that intent without truncating the manager's bounded
+    // teardown.
+    const SHUTDOWN_OUTER_BUDGET_MS = 10_000;
     // PR5-024 (Codex pass-3 BLOCKER) side-effect: with the SIGTERM
     // handler now awaiting MCP teardown, a Promise rejected concurrently
     // by the in-flight bootMcpManager (when manager.shutdown closes its

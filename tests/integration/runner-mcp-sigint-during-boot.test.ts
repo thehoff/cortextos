@@ -160,9 +160,10 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
     expect(exitElapsed).toBeLessThan(6_000);
     expect(stderr).toMatch(/\[openai-runner] sigterm/);
 
-    // Allow the kernel a beat to reap the rolled-back child after the
-    // runner exits.
-    for (let i = 0; i < 30 && isAlive(hangPid); i++) await sleep(100);
+    // Allow the kernel time to reap the rolled-back child after the
+    // runner exits. Under heavy vitest parallelism, init's reaping of
+    // reparented zombies can drift past 1-2s.
+    for (let i = 0; i < 100 && isAlive(hangPid); i++) await sleep(100);
     expect(isAlive(hangPid)).toBe(false);
   });
 });

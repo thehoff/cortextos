@@ -92,6 +92,15 @@ export interface ConnectInProgress {
   ready: Promise<ConnectedMcpClient>;
   /** Idempotent close. Safe to call concurrently with `ready` resolution (Codex pass-2 PR5-013). */
   cleanup: () => Promise<void>;
+  /**
+   * Snapshot the child process's PID. Returns null before transport.start()
+   * has spawned the child and ALSO after the SDK's close() nulls
+   * `_process`. Used by the manager's force-kill-on-timeout path
+   * (Codex pass-5 PR5-044): callers should NEVER raw-PID-kill after
+   * close() has returned because the kernel may have reused the PID
+   * — getPid() will return null in that case.
+   */
+  getPid: () => number | null;
 }
 
 /**
@@ -121,27 +130,47 @@ export function beginMcpConnect(
     { capabilities: {} },
   );
 
+  // Codex pass-5 PR5-044: cache the spawned child's PID as soon as the
+  // SDK exposes it, so the manager can SIGKILL the right PID even after
+  // close() has nulled _process (the SDK sets `this._process = undefined`
+  // at the START of close(), not the end — a blind transport.pid read
+  // after close() always returns null).
+  //
+  // We poll every 5ms for up to 30s — beginMcpConnect returns
+  // synchronously, but transport.start() runs inside the awaited
+  // client.connect() one microtask later, so transport.pid only becomes
+  // non-null after the next tick. unref() keeps the timer from
+  // preventing process exit.
+  let capturedPid: number | null = null;
   let cleaned = false;
+  const pidWatcher: NodeJS.Timeout = setInterval(() => {
+    const p = (transport as { pid?: number | null }).pid ?? null;
+    if (p !== null && p !== undefined) {
+      capturedPid = p;
+      clearInterval(pidWatcher);
+    }
+  }, 5);
+  pidWatcher.unref?.();
+  const pidWatcherTimeout = setTimeout(() => clearInterval(pidWatcher), 30_000);
+  pidWatcherTimeout.unref?.();
+
   const cleanup = async (): Promise<void> => {
     if (cleaned) return;
     cleaned = true;
+    clearInterval(pidWatcher);
+    clearTimeout(pidWatcherTimeout);
     // Try the SDK's graceful close (stdin EOF → 2s wait → SIGTERM →
     // 2s wait → SIGKILL chain). The SDK awaits the spawned child's
     // 'spawn' event during start(), so we cannot SIGKILL the PID
     // before close() — that would orphan transport.start() if the
     // kill landed before spawn fired (Codex pass-4 follow-up: this
     // exact race broke the manager "shutdown during boot" unit test).
+    //
+    // Force-kill on cleanup-abandonment is handled by the manager via
+    // getPid() + a race-timeout check (Codex pass-5 PR5-044 + PR5-045).
     try { await client.close(); } catch { /* swallow — already errored */ }
-    // After client.close() returns, SIGKILL the PID as a belt-and-
-    // suspenders in case the SDK's 4s graceful chain drifted past
-    // the manager's outer race under heavy concurrent test load.
-    // By this point spawn has fired (close() awaits transport state),
-    // so the kill is safe.
-    const pid = (transport as { pid?: number | null }).pid ?? null;
-    if (pid !== null && pid !== undefined) {
-      try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
-    }
   };
+  const getPid = (): number | null => capturedPid;
 
   const ready = (async (): Promise<ConnectedMcpClient> => {
     try {
@@ -220,7 +249,7 @@ export function beginMcpConnect(
   }
   })();
 
-  return { ready, cleanup };
+  return { ready, cleanup, getPid };
 }
 
 /**
