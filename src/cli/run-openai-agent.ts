@@ -325,25 +325,35 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
         process.exit(1);
       }
     });
+    // PR5-024 (Codex pass-3 BLOCKER): shutdown awaits MCP teardown with
+    // a 5s outer race so a stuck subprocess can't block SIGTERM
+    // compliance. The handler ALWAYS yields one microtask before
+    // `process.exit(0)` — sync exit from inside an `process.on('SIGTERM')`
+    // handler under tsx 4.21+ heavy-load conditions can race the
+    // wrapper's child-exit reporting and cause the parent to see
+    // exit code 143 even though `process.on('exit')` fires with 0.
+    // Yielding a microtask defers the exit past the signal-delivery
+    // tick, which gives tsx's bookkeeping time to settle.
     const shutdown = async (): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
-      process.stderr.write(`[openai-runner] shutdown begin (mcp=${mcpManager ? 'ready' : (partialMcpShutdown ? 'booting' : 'none')})\n`);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       safeUpdateHeartbeat('stopping', currentTask);
       safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
-      // PR5-024 (Codex pass-3 BLOCKER): await MCP teardown with an outer
-      // 5s race so a stuck child can't block SIGTERM compliance. The
-      // manager has its own internal budget but the outer race is
-      // defense-in-depth for unexpected wedge paths.
       const closer = mcpManager?.shutdown ?? partialMcpShutdown;
       if (closer) {
+        // PR5-024 slow path: await teardown with 5s outer race. The
+        // manager has its own 5s budget; the outer race is
+        // defense-in-depth for unexpected wedge paths.
         await Promise.race([
           closer().catch(() => undefined),
           new Promise<void>(resolve => setTimeout(resolve, SHUTDOWN_OUTER_BUDGET_MS)),
         ]);
+      } else {
+        // Even the no-MCP path yields one microtask so the tsx-wrapper
+        // exit-code race (see comment above) doesn't surface.
+        await Promise.resolve();
       }
-      process.stderr.write('[openai-runner] shutdown done\n');
       process.exit(0);
     };
     process.on('SIGTERM', () => { process.stderr.write('[openai-runner] sigterm\n'); void shutdown(); });

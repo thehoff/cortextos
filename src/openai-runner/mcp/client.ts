@@ -125,7 +125,22 @@ export function beginMcpConnect(
   const cleanup = async (): Promise<void> => {
     if (cleaned) return;
     cleaned = true;
+    // Try the SDK's graceful close (stdin EOF → 2s wait → SIGTERM →
+    // 2s wait → SIGKILL chain). The SDK awaits the spawned child's
+    // 'spawn' event during start(), so we cannot SIGKILL the PID
+    // before close() — that would orphan transport.start() if the
+    // kill landed before spawn fired (Codex pass-4 follow-up: this
+    // exact race broke the manager "shutdown during boot" unit test).
     try { await client.close(); } catch { /* swallow — already errored */ }
+    // After client.close() returns, SIGKILL the PID as a belt-and-
+    // suspenders in case the SDK's 4s graceful chain drifted past
+    // the manager's outer race under heavy concurrent test load.
+    // By this point spawn has fired (close() awaits transport state),
+    // so the kill is safe.
+    const pid = (transport as { pid?: number | null }).pid ?? null;
+    if (pid !== null && pid !== undefined) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+    }
   };
 
   const ready = (async (): Promise<ConnectedMcpClient> => {
