@@ -95,21 +95,6 @@ export async function POST(
   // Default: assume the server lives at <projectRoot>/mcp-servers/<name>/dist/index.js,
   // built via init-mcp + npm run build. Operator can override command/args.
   const defaultArg = join(getFrameworkRoot(), 'mcp-servers', serverName, 'dist', 'index.js');
-  const usingDefaultPath =
-    !Array.isArray(body.args) &&
-    (typeof body.command !== 'string' || body.command === 'node');
-
-  // Codex pass-2 PR6-018: when the route falls back to the canonical
-  // scaffold path, hard-check that dist/index.js actually exists. The
-  // UI shows a soft warning; this is the API-layer gate that catches
-  // curl/script callers who'd otherwise wire a config that ENOENTs the
-  // agent at boot.
-  if (usingDefaultPath && !existsSync(defaultArg)) {
-    return NextResponse.json({
-      error: `mcp server "${serverName}" has not been built — ${defaultArg} does not exist`,
-      hint: `cd ${join(getFrameworkRoot(), 'mcp-servers', serverName)} && npm install && npm run build`,
-    }, { status: 422 });
-  }
 
   const serverEntry: McpServerSpec = {
     name: serverName,
@@ -126,6 +111,22 @@ export async function POST(
       : {}),
     ...(body.env_inherit !== undefined ? { env_inherit: Boolean(body.env_inherit) } : {}),
   };
+
+  // Codex pass-2 PR6-018 + pass-3 PR6-021: hard-check that the
+  // canonical scaffold's dist/index.js exists IF the effective args
+  // reference it. The earlier check gated only on `command === 'node'`
+  // but the args default still pointed at the scaffold path even when
+  // command was something like 'tsx', letting curl/script callers wire
+  // a config that ENOENTs the agent at boot. Inspecting the effective
+  // serverEntry.args closes that bypass — the check fires for any
+  // command if the args were not explicitly overridden.
+  const argsExplicitlyOverridden = Array.isArray(body.args);
+  if (!argsExplicitlyOverridden && serverEntry.args?.includes(defaultArg) && !existsSync(defaultArg)) {
+    return NextResponse.json({
+      error: `mcp server "${serverName}" has not been built — ${defaultArg} does not exist`,
+      hint: `cd ${join(getFrameworkRoot(), 'mcp-servers', serverName)} && npm install && npm run build`,
+    }, { status: 422 });
+  }
 
   const force = body.force === true;
 

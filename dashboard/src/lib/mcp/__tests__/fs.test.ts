@@ -39,6 +39,28 @@ describe('validateMcpServerSpec', () => {
     expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', tool_timeout_sec: 0 })).toThrow(/tool_timeout_sec/);
     expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', tool_timeout_sec: 700 })).toThrow(/tool_timeout_sec/);
   });
+  // Codex PR6-020: dashboard slim validator must mirror PR5-026/027.
+  it('rejects command containing ".." (PR6-020 / PR5-026 path-traversal guard)', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: '../../bin/node' })).toThrow(/must not contain "\.\."/);
+  });
+  it('rejects command ending in ".json" (PR6-020 / PR5-026 config-file guard)', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: '/etc/some-config.json' })).toThrow(/must not end with "\.json"/);
+  });
+  it('rejects ".JSON" suffix case-insensitively', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: '/tmp/x.JSON' })).toThrow(/must not end with "\.json"/);
+  });
+  it('rejects bare relative cwd (PR6-020 / PR5-027 explicit-relative guard)', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', cwd: 'mcp-servers/foo' })).toThrow(/cwd must be absolute.*"\.\/" or "\.\.\/"/);
+  });
+  it('accepts an absolute cwd', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', cwd: '/abs/path' })).not.toThrow();
+  });
+  it('accepts a "./"-prefixed cwd', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', cwd: './sub' })).not.toThrow();
+  });
+  it('accepts a "../"-prefixed cwd', () => {
+    expect(() => validateMcpServerSpec({ name: 'srv', command: 'node', cwd: '../sibling' })).not.toThrow();
+  });
 });
 
 describe('writeMcpScaffold', () => {

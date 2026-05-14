@@ -57,6 +57,18 @@ export function validateMcpServerSpec(raw: unknown): McpServerSpec {
   if (typeof s.command !== 'string' || s.command.length === 0 || s.command.length > 256) {
     throw new Error('mcp_servers[].command must be a non-empty string of length <= 256');
   }
+  // Codex PR6-020 (HIGH): mirror the runtime's PR5-026 path-traversal +
+  // config-file-shape guards on `command`. Without these, the dashboard
+  // can persist a config that fails at agent boot with an opaque
+  // FATAL line. Slim validator stays a subset of validateConfig: any
+  // future drift surfaces at boot rather than as a silent dashboard
+  // accept of a runtime-rejected shape.
+  if (s.command.includes('..')) {
+    throw new Error('mcp_servers[].command must not contain ".." (path-traversal guard)');
+  }
+  if (s.command.toLowerCase().endsWith('.json')) {
+    throw new Error('mcp_servers[].command must not end with ".json" — set "command" to the interpreter (e.g. "node", "tsx") and put the script in "args"');
+  }
   if (s.args !== undefined) {
     if (!Array.isArray(s.args) || s.args.length > 32) {
       throw new Error('mcp_servers[].args must be an array of length <= 32');
@@ -80,8 +92,19 @@ export function validateMcpServerSpec(raw: unknown): McpServerSpec {
       }
     }
   }
-  if (s.cwd !== undefined && (typeof s.cwd !== 'string' || s.cwd.length === 0 || s.cwd.length > 1024)) {
-    throw new Error('mcp_servers[].cwd must be a non-empty string of length <= 1024');
+  if (s.cwd !== undefined) {
+    if (typeof s.cwd !== 'string' || s.cwd.length === 0 || s.cwd.length > 1024) {
+      throw new Error('mcp_servers[].cwd must be a non-empty string of length <= 1024');
+    }
+    // Codex PR6-020 (HIGH): mirror PR5-027's absolute-or-explicit-relative
+    // cwd guard. A plain `relative/path` would resolve against the
+    // runner's process cwd at spawn time, rarely what the operator
+    // intended.
+    const isAbsolute = s.cwd.startsWith('/');
+    const isExplicitRelative = s.cwd.startsWith('./') || s.cwd.startsWith('../');
+    if (!isAbsolute && !isExplicitRelative) {
+      throw new Error(`mcp_servers[].cwd must be absolute (starting with "/") or start with "./" or "../" (got ${JSON.stringify(s.cwd)})`);
+    }
   }
   if (s.tool_timeout_sec !== undefined && (typeof s.tool_timeout_sec !== 'number' || s.tool_timeout_sec < 1 || s.tool_timeout_sec > 600)) {
     throw new Error('mcp_servers[].tool_timeout_sec must be a number in [1, 600]');

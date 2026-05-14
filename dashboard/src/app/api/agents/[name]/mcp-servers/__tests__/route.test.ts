@@ -127,6 +127,41 @@ describe('POST /api/agents/[name]/mcp-servers', () => {
     expect(body.error).toMatch(/mcp_servers|name must/);
   });
 
+  // Codex PR6-021: the original PR6-018 build-check gated only on
+  // `command === 'node'`. If the operator passed `command: 'tsx'` (or
+  // any non-'node' string) WITHOUT explicitly overriding `args`, the
+  // route would still set serverEntry.args = [defaultArg] pointing at
+  // the canonical scaffold dist/index.js. The build-check was skipped
+  // → a config got persisted that ENOENTs the agent at boot.
+  //
+  // These tests are ordered BEFORE the 401-test below because that one
+  // does vi.resetModules() which can disrupt the dashboard's vitest
+  // `next/server` alias resolution for any subsequent test in the same
+  // file when the full suite is running in parallel.
+  it('returns 422 when args default to the scaffold path but dist/index.js is missing, regardless of command (PR6-021)', async () => {
+    // The 'srv-unbuilt' scaffold dir does NOT have a dist/index.js
+    // (beforeEach only seeds the three known names). The route MUST
+    // surface the build-missing 422 even though command is 'tsx'.
+    const { req, ctx } = postReq('rag-1', { name: 'srv-unbuilt', command: 'tsx' });
+    const res = await route.POST(req, ctx);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string; hint?: string };
+    expect(body.error).toMatch(/has not been built/);
+  });
+
+  it('does NOT 422-block when args are explicitly overridden (PR6-021)', async () => {
+    // Operator explicitly passes args, so they're saying "I know what
+    // I'm doing; don't infer the scaffold path". The build-check
+    // should NOT fire here.
+    const { req, ctx } = postReq('rag-1', {
+      name: 'srv-explicit',
+      command: 'tsx',
+      args: ['/some/explicit/path.ts'],
+    });
+    const res = await route.POST(req, ctx);
+    expect(res.status).toBe(201);
+  });
+
   it('returns 401 without a session', async () => {
     vi.doMock('@/lib/auth', () => ({ auth: () => null }));
     vi.resetModules();
