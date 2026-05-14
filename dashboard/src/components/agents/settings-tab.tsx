@@ -17,13 +17,23 @@ interface AgentConfig {
   max_session_seconds?: number;
   max_crashes_per_day?: number;
   startup_delay?: number;
-  runtime?: 'claude-code' | 'codex-app-server' | 'hermes';
+  runtime?: 'claude-code' | 'codex-app-server' | 'hermes' | 'openai-compatible';
+  // openai-compatible (thin) runtime fields. The thin runner reads these
+  // from config.json at boot — surface them here so an operator can edit
+  // an endpoint/key/tool budget without dropping to the shell.
+  endpoint?: string;
+  api_key_env?: string;
+  tools?: string[];
+  tool_loop_max_iterations?: number;
+  tool_timeout_sec?: number;
+  tool_bus_send_budget?: number;
 }
 
 const MODEL_PLACEHOLDER: Record<NonNullable<AgentConfig['runtime']>, string> = {
   'claude-code': 'claude-sonnet-4-5',
   'codex-app-server': 'gpt-5-codex',
   hermes: 'hermes-1',
+  'openai-compatible': 'hermes-3-8b',
 };
 
 interface SettingsTabProps {
@@ -145,17 +155,22 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
     );
   };
 
-  const saveAgConfig = () =>
-    saveSection(
-      {
-        model: config.model,
-        max_session_seconds: config.max_session_seconds,
-        max_crashes_per_day: config.max_crashes_per_day,
-        startup_delay: config.startup_delay,
-      },
-      setAgSaving,
-      setAgMessage,
-    );
+  const saveAgConfig = () => {
+    const payload: Partial<AgentConfig> = {
+      model: config.model,
+      max_session_seconds: config.max_session_seconds,
+      max_crashes_per_day: config.max_crashes_per_day,
+      startup_delay: config.startup_delay,
+    };
+    if (config.runtime === 'openai-compatible') {
+      payload.endpoint = config.endpoint;
+      payload.api_key_env = config.api_key_env;
+      payload.tool_loop_max_iterations = config.tool_loop_max_iterations;
+      payload.tool_timeout_sec = config.tool_timeout_sec;
+      payload.tool_bus_send_budget = config.tool_bus_send_budget;
+    }
+    saveSection(payload, setAgSaving, setAgMessage);
+  };
 
   if (loading) {
     return <div className="p-6 text-muted-foreground">Loading settings...</div>;
@@ -338,6 +353,68 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
               />
             </div>
           </div>
+
+          {config.runtime === 'openai-compatible' && (
+            <div className="space-y-3 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+              <div className="text-xs font-medium text-sky-600">Local LLM (openai-compatible) endpoint</div>
+              <div>
+                <label className="text-xs text-muted-foreground">Endpoint</label>
+                <input
+                  type="text"
+                  value={config.endpoint || ''}
+                  onChange={e => setConfig(p => ({ ...p, endpoint: e.target.value }))}
+                  placeholder="http://192.168.81.38:8082"
+                  className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">API key env var</label>
+                <input
+                  type="text"
+                  value={config.api_key_env || ''}
+                  onChange={e => setConfig(p => ({ ...p, api_key_env: e.target.value }))}
+                  placeholder="OPENROUTER_API_KEY (optional — leave blank for local llama.cpp)"
+                  className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Tool loop max iters</label>
+                  <input
+                    type="number"
+                    value={config.tool_loop_max_iterations ?? ''}
+                    onChange={e => setConfig(p => ({ ...p, tool_loop_max_iterations: e.target.value ? Number(e.target.value) : undefined }))}
+                    placeholder="10"
+                    className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Tool timeout (sec)</label>
+                  <input
+                    type="number"
+                    value={config.tool_timeout_sec ?? ''}
+                    onChange={e => setConfig(p => ({ ...p, tool_timeout_sec: e.target.value ? Number(e.target.value) : undefined }))}
+                    placeholder="30"
+                    className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">bus_send budget</label>
+                  <input
+                    type="number"
+                    value={config.tool_bus_send_budget ?? ''}
+                    onChange={e => setConfig(p => ({ ...p, tool_bus_send_budget: e.target.value ? Number(e.target.value) : undefined }))}
+                    placeholder="5"
+                    className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Tools allowlist is edited per-agent via config.json — UI is a follow-up.
+                Restart the agent after saving so the runner re-reads config.
+              </div>
+            </div>
+          )}
 
           {agMessage && (
             <div className={`rounded-md px-3 py-2 text-xs ${agMessage.type === 'success' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>

@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 // ---------------------------------------------------------------------------
 
 const VALID_NAME = /^[a-z0-9_-]+$/;
-const VALID_TEMPLATES = ['agent', 'agent-codex', 'orchestrator', 'analyst'];
+const VALID_TEMPLATES = ['agent', 'agent-codex', 'agent-thin', 'orchestrator', 'analyst'];
 
 
 // ---------------------------------------------------------------------------
@@ -92,10 +92,14 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (!botToken || typeof botToken !== 'string') {
+  // agent-thin (openai-compatible runtime) doesn't use Telegram — mirrors
+  // the CLI's `add-agent --template agent-thin` flow which skips .env and
+  // bot-cred preflight. All other templates still hard-require them.
+  const isThin = template === 'agent-thin';
+  if (!isThin && (!botToken || typeof botToken !== 'string')) {
     return Response.json({ error: 'botToken is required' }, { status: 400 });
   }
-  if (!chatId || typeof chatId !== 'string') {
+  if (!isThin && (!chatId || typeof chatId !== 'string')) {
     return Response.json({ error: 'chatId is required' }, { status: 400 });
   }
 
@@ -125,15 +129,18 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(agentDir, { recursive: true });
     await copyDir(templateDir, agentDir);
 
-    // 2. Write .env file
-    const envLines = [
-      `BOT_TOKEN=${botToken}`,
-      `CHAT_ID=${chatId}`,
-    ];
-    if (allowedUser) {
-      envLines.push(`ALLOWED_USER=${allowedUser}`);
+    // 2. Write .env file (skipped for openai-compatible/agent-thin — that
+    // runtime sources endpoint + model from config.json, not Telegram creds.)
+    if (!isThin) {
+      const envLines = [
+        `BOT_TOKEN=${botToken}`,
+        `CHAT_ID=${chatId}`,
+      ];
+      if (allowedUser) {
+        envLines.push(`ALLOWED_USER=${allowedUser}`);
+      }
+      await fs.writeFile(path.join(agentDir, '.env'), envLines.join('\n') + '\n', 'utf-8');
     }
-    await fs.writeFile(path.join(agentDir, '.env'), envLines.join('\n') + '\n', 'utf-8');
 
     // 3. Create state dirs under CTX_ROOT
     const stateDirs = ['inbox', 'outbox', 'processed', 'inflight', 'logs', 'state'];

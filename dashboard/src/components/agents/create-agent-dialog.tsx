@@ -43,6 +43,12 @@ const TEMPLATES = [
     description: 'General-purpose worker on the codex-app-server runtime (gpt-5-codex). Skills under plugins/cortextos-agent-skills/skills/, no slash-commands.',
   },
   {
+    value: 'agent-thin',
+    label: 'Agent (Local LLM / openai-compatible)',
+    runtime: 'openai-compatible',
+    description: 'Lightweight worker on the openai-compatible runtime — points at any OpenAI-shaped endpoint (local llama.cpp, OpenRouter, etc.). No Telegram creds; configure endpoint + model in the agent settings after create.',
+  },
+  {
     value: 'orchestrator',
     label: 'Orchestrator (Claude only)',
     runtime: 'claude-code',
@@ -93,8 +99,11 @@ export function CreateAgentDialog({
       return 'Name must be lowercase alphanumeric, hyphens, or underscores (cannot start with - or _).';
     if (!org.trim()) return 'Organization is required.';
     if (!template) return 'Template is required.';
-    if (!botToken.trim()) return 'Bot token is required.';
-    if (!chatId.trim()) return 'Chat ID is required.';
+    // agent-thin skips Telegram entirely; everything else still needs creds.
+    if (template !== 'agent-thin') {
+      if (!botToken.trim()) return 'Bot token is required.';
+      if (!chatId.trim()) return 'Chat ID is required.';
+    }
     return null;
   }
 
@@ -201,29 +210,33 @@ export function CreateAgentDialog({
             </p>
           </div>
 
-          {/* Bot Token */}
-          <div className="grid gap-1.5">
-            <Label htmlFor="agent-bot-token">Bot Token</Label>
-            <Input
-              id="agent-bot-token"
-              placeholder="123456:ABC-DEF..."
-              value={botToken}
-              onChange={(e) => setBotToken(e.target.value)}
-              disabled={submitting}
-            />
-          </div>
+          {/* Telegram creds — hidden for agent-thin (openai-compatible runtime
+              has no Telegram channel; matches the CLI's add-agent flow). */}
+          {template !== 'agent-thin' && (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-bot-token">Bot Token</Label>
+                <Input
+                  id="agent-bot-token"
+                  placeholder="123456:ABC-DEF..."
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
 
-          {/* Chat ID */}
-          <div className="grid gap-1.5">
-            <Label htmlFor="agent-chat-id">Chat ID</Label>
-            <Input
-              id="agent-chat-id"
-              placeholder="-1001234567890"
-              value={chatId}
-              onChange={(e) => setChatId(e.target.value)}
-              disabled={submitting}
-            />
-          </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-chat-id">Chat ID</Label>
+                <Input
+                  id="agent-chat-id"
+                  placeholder="-1001234567890"
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+            </>
+          )}
 
           {/* Feedback */}
           {error && (
