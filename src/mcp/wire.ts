@@ -9,6 +9,7 @@
  * and node:* builtins — no CLI or runner internals.
  */
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { validateConfig, type McpServerSpec } from '../openai-runner/config.js';
 
 export interface WireOptions {
@@ -63,8 +64,11 @@ export function wireMcpServerToAgent(opts: WireOptions): WireResult {
   validateConfig(mergedCfg);
 
   // Atomic-ish write: write to tmp, rename. Pretty-print to keep the
-  // file diff-friendly.
-  const tmpPath = `${opts.agentConfigPath}.wire-tmp`;
+  // file diff-friendly. Codex pass-1 PR6-002 (HIGH): per-call random
+  // suffix so concurrent wire/unwire calls against the same agent
+  // can't clobber a shared tmp file even if the dashboard's per-agent
+  // lock fails open.
+  const tmpPath = `${opts.agentConfigPath}.wire-${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(mergedCfg, null, 2) + '\n');
   renameSync(tmpPath, opts.agentConfigPath);
 

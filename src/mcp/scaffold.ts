@@ -11,6 +11,18 @@
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+/**
+ * Sentinel error code surfaced when destDir already exists, so callers
+ * can return a clean 409 from HTTP routes without parsing message text.
+ */
+export class ScaffoldDestExistsError extends Error {
+  readonly code = 'EEXIST';
+  constructor(destDir: string) {
+    super(`destination already exists: ${destDir}`);
+    this.name = 'ScaffoldDestExistsError';
+  }
+}
+
 const MCP_SERVER_NAME_RE = /^[a-z][a-z0-9-]*$/;
 const PACKAGE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -159,11 +171,30 @@ export function writeMcpScaffold(opts: ScaffoldOptions): ScaffoldResult {
       `MCP server name "${opts.serverName}" must match /^[a-z][a-z0-9-]*$/ (kebab-lowercase, starts with a letter)`,
     );
   }
+  // Codex pass-1 PR6-002 (HIGH): exclusive-create semantics. mkdirSync
+  // without `recursive` throws EEXIST atomically if another process
+  // (or another concurrent dashboard request) already created the dir
+  // between our existsSync check and our mkdir. Wrap both in one
+  // operation so two concurrent scaffolds can't both pass the existence
+  // check.
   if (existsSync(opts.destDir)) {
-    throw new Error(`destination already exists: ${opts.destDir}`);
+    throw new ScaffoldDestExistsError(opts.destDir);
   }
-  mkdirSync(opts.destDir, { recursive: true });
-  mkdirSync(join(opts.destDir, 'src'), { recursive: true });
+  try {
+    mkdirSync(opts.destDir, { recursive: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      throw new ScaffoldDestExistsError(opts.destDir);
+    }
+    if (code === 'ENOENT') {
+      // Parent directory missing — operator hasn't run cortextos init,
+      // or destDir is rooted somewhere weird. Surface as a normal error.
+      throw new Error(`parent directory does not exist for ${opts.destDir}`);
+    }
+    throw err;
+  }
+  mkdirSync(join(opts.destDir, 'src'), { recursive: false });
 
   const filesWritten: string[] = [];
   const write = (relPath: string, content: string): void => {
