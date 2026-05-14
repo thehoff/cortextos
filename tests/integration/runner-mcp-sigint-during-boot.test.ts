@@ -1,14 +1,19 @@
 /**
  * PR5 (MCP support) — SIGTERM-during-boot integration test
- * (PLAN §18.2, Codex pass-1 PR5-002 + pass-3 PR5-023 verification).
+ * (PLAN §18.2, Codex pass-1 PR5-002 + pass-3 PR5-023 verification,
+ * tightened to PID-tracked under Codex pass-4 PR5-041).
  *
- * Boot the runner against a hang fixture that never responds to
- * `initialize`, with a long mcp_boot_timeout_sec. Send SIGTERM well
- * before boot would naturally fail. Assert:
+ * Boot the runner against a hang-with-PID-track fixture that writes its
+ * PID synchronously on startup and never responds to `initialize`, with
+ * a long mcp_boot_timeout_sec. Send SIGTERM well before boot would
+ * naturally fail. Assert:
  *   - Runner exits within 6s of the signal (NOT after the boot timeout).
- *   - Exit code is non-zero (the FATAL "MCP boot failed" path runs OR
- *     the signal handler short-circuits boot — either is acceptable as
- *     long as no zombie subprocess survives).
+ *   - The hang subprocess (whose PID the fixture recorded before the
+ *     SDK handshake even began) is no longer alive after the runner
+ *     exits. This is the substantive PR5-024 anti-leak property — the
+ *     prior `void closer().catch(...); process.exit(0)` form would have
+ *     exited the runner cleanly but left the hang child alive past the
+ *     parent.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
@@ -21,21 +26,32 @@ import { AddressInfo } from 'net';
 const REPO_ROOT = join(__dirname, '..', '..');
 const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const CLI_SRC = join(REPO_ROOT, 'src', 'cli', 'index.ts');
-const HANG_FIXTURE = join(REPO_ROOT, 'tests', 'fixtures', 'mcp', 'server-hang.ts');
+const HANG_PID_FIXTURE = join(REPO_ROOT, 'tests', 'fixtures', 'mcp', 'server-hang-pid-track.ts');
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
   let tempRoot: string;
   let agentDir: string;
+  let pidFile: string;
   let proc: ChildProcess | null = null;
   let mockLlm: Server;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(join(tmpdir(), 'pr5-sigint-boot-'));
     agentDir = join(tempRoot, 'project', 'orgs', 'acme', 'agents', 'rag');
+    pidFile = join(tempRoot, 'hang.pid');
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(join(tempRoot, '.cortextos', 'sigint-test', 'config'), { recursive: true });
     writeFileSync(
@@ -56,8 +72,11 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
       heartbeat_interval_sec: 60, request_timeout_sec: 10,
       // Long boot timeout so the signal handler is the thing that ends boot,
       // not a timeout. If the SIGTERM-during-boot path didn't tear down
-      // children, the test would time out at the suite level (30s).
-      mcp_servers: [{ name: 'hang', command: TSX_BIN, args: [HANG_FIXTURE] }],
+      // children, the test would catch the leak via the PID check.
+      mcp_servers: [{
+        name: 'hang', command: TSX_BIN, args: [HANG_PID_FIXTURE],
+        env: { MCP_PIDFILE: pidFile },
+      }],
       mcp_boot_timeout_sec: 25,
     }));
     writeFileSync(join(agentDir, 'SYSTEM_PROMPT.md'), 'You are a test agent.');
@@ -107,6 +126,22 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
       onData();
     });
     await sleep(250);
+    // Poll for the PID file — the fixture writes it synchronously on
+    // startup, but tsx-compile latency means we can't assume the wall-
+    // clock window between MCP_BOOT_BEGIN and the SDK spawn-handshake
+    // is enough. The fixture writes BEFORE any stdin read so once we
+    // observe the file the boot is definitely mid-flight.
+    {
+      const pidWaitStart = Date.now();
+      while (!existsSync(pidFile) && Date.now() - pidWaitStart < 5_000) {
+        await sleep(50);
+      }
+      expect(existsSync(pidFile)).toBe(true);
+    }
+    const hangPid = Number(readFileSync(pidFile, 'utf-8'));
+    expect(Number.isFinite(hangPid) && hangPid > 0).toBe(true);
+    expect(isAlive(hangPid)).toBe(true);
+
     const signalStart = Date.now();
     proc.kill('SIGTERM');
     await new Promise<void>((resolve, reject) => {
@@ -118,22 +153,16 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
     // The KEY property tested: SIGTERM during mid-boot does NOT leak the
     // hang subprocess. Pre-PR5-024 the signal handler fired `void
     // closer().catch(...)` then `process.exit(0)` synchronously, so the
-    // hang child stayed alive past the 5s outer budget (eventually it
-    // would still die when the parent went away, but the runner had
-    // already exited with code 0 — operators couldn't tell the difference
-    // from a clean shutdown). Post-fix, the handler awaits MCP teardown
-    // with a 5s outer race; if boot was mid-flight and rejection races
-    // with the manager's own rollback, exit happens AFTER teardown is
-    // either complete or has hit its budget.
-    //
-    // The substance of "no zombie subprocess" is verified at the manager
-    // unit level (tests/unit/mcp/manager.test.ts > "shutdown during
-    // boot"); here we only pin that the runner doesn't HANG. The exact
-    // exit code (0 from graceful, 1 from bootMcpManager catch, or 143
-    // from Node racing transport-close ordering) is too environment-
-    // dependent — across vitest worker scheduling and SDK transport
-    // teardown timing all three surface — to assert specifically.
+    // SDK's client.close() never finished and the hang child stayed
+    // alive past the parent. Codex pass-4 PR5-041: only the PID check
+    // catches that regression; the runner-exits-within-6s budget alone
+    // is satisfied by both the broken AND the fixed forms.
     expect(exitElapsed).toBeLessThan(6_000);
     expect(stderr).toMatch(/\[openai-runner] sigterm/);
+
+    // Allow the kernel a beat to reap the rolled-back child after the
+    // runner exits.
+    for (let i = 0; i < 30 && isAlive(hangPid); i++) await sleep(100);
+    expect(isAlive(hangPid)).toBe(false);
   });
 });

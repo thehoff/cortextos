@@ -302,20 +302,27 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // by the in-flight bootMcpManager (when manager.shutdown closes its
     // transports the SDK fires `Connection closed`) can land as an
     // "unhandledRejection" between async microtasks even though the boot
-    // call site has its own try/catch. Catching it here keeps the signal
-    // handler in control of the exit code instead of letting Node's
-    // default termination kick in (exit 1 from --unhandled-rejections,
-    // or 143 if the process is racing the SIGTERM default). The catch
-    // is non-suppressive: anything genuinely unexpected still lands in
-    // stderr so it surfaces in production logs.
+    // call site has its own try/catch. Suppressing the rejection ONLY
+    // during shutdown lets the signal handler reach `process.exit(0)`;
+    // any uncaught error or rejection OUTSIDE the shutdown race remains
+    // fatal (Codex pass-4 PR5-040 — silent-survive-with-broken-state
+    // would be worse than a hard crash that PM2 can surface). Log lines
+    // are redacted with the API key + collected MCP secrets so they
+    // can't leak secrets into operator logs.
     process.on('uncaughtException', (err) => {
+      const raw = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      const safe = redactSecrets(raw, apiKey, collectedMcpSecrets);
+      process.stderr.write(`[openai-runner] uncaught exception: ${safe}\n`);
       if (!shuttingDown) {
-        process.stderr.write(`[openai-runner] uncaught: ${err instanceof Error ? err.stack : String(err)}\n`);
+        process.exit(1);
       }
     });
     process.on('unhandledRejection', (reason) => {
+      const raw = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+      const safe = redactSecrets(raw, apiKey, collectedMcpSecrets);
+      process.stderr.write(`[openai-runner] unhandled rejection: ${safe}\n`);
       if (!shuttingDown) {
-        process.stderr.write(`[openai-runner] unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}\n`);
+        process.exit(1);
       }
     });
     const shutdown = async (): Promise<void> => {

@@ -80,18 +80,28 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
   // $VAR secrets remain visible after a rejecting boot.
   const secrets = opts.secretsSink ?? new Set<string>();
   const childCleanups: Array<() => Promise<void>> = [];
-  let closing = false;
+  // Codex pass-4 PR5-041: track the in-flight close promise so concurrent
+  // shutdown callers (e.g. the runner's SIGTERM handler AND the bootMcpManager
+  // rollback path both call shutdown()) all AWAIT the same close-all race
+  // rather than the second caller seeing `closing=true` and returning
+  // immediately. The original idempotency form let a later `process.exit(1)`
+  // fire before the first caller's cleanups finished, abandoning the SDK
+  // transport.close() chain (which is the part that actually SIGKILLs the
+  // hang subprocess).
+  let closingPromise: Promise<void> | null = null;
 
   const shutdown = async (): Promise<void> => {
-    if (closing) return;
-    closing = true;
-    const deadline = Date.now() + SHUTDOWN_TOTAL_BUDGET_MS;
-    // Race close-all against a hard budget so a stuck server can't block
-    // SIGTERM compliance.
-    await Promise.race([
-      Promise.allSettled(childCleanups.map(c => c())),
-      new Promise<void>(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now()))),
-    ]);
+    if (closingPromise) return closingPromise;
+    closingPromise = (async () => {
+      const deadline = Date.now() + SHUTDOWN_TOTAL_BUDGET_MS;
+      // Race close-all against a hard budget so a stuck server can't block
+      // SIGTERM compliance.
+      await Promise.race([
+        Promise.allSettled(childCleanups.map(c => c())),
+        new Promise<void>(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now()))),
+      ]);
+    })();
+    return closingPromise;
   };
 
   // Wire the partial-manager shutdown BEFORE any spawn so SIGINT
