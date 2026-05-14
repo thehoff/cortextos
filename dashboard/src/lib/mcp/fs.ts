@@ -35,6 +35,13 @@ export interface McpServerSpec {
  * runtime's validateConfig section for mcp_servers, minus the duplicate-
  * name check (caller passes the existing entries so it can decide
  * whether to allow replacement).
+ *
+ * Codex pass-2 PR6-019: env-key restrictions intentionally deferred to
+ * the runtime's full validateConfig. If the runtime adds an env-name
+ * blocklist in the future, the dashboard's slim check should be kept
+ * narrower than the runtime so any drift surfaces as a runtime
+ * rejection at agent boot rather than a dashboard accept of something
+ * the runtime rejects.
  */
 export function validateMcpServerSpec(raw: unknown): McpServerSpec {
   if (typeof raw !== 'object' || raw === null) {
@@ -252,6 +259,24 @@ export function unwireMcpServerFromAgent(opts: UnwireOptions): UnwireResult {
   const existing = Array.isArray(cfg.mcp_servers) ? (cfg.mcp_servers as McpServerSpec[]) : [];
   const removedEntry = existing.find(e => e.name === opts.serverName);
   if (!removedEntry) return { removed: false };
+
+  // Codex pass-2 PR6-013: if cfg.tools[] references any qualified tool
+  // belonging to the server we're about to remove, unwiring will produce
+  // a config that fails the runtime's phase-1 validation at agent boot
+  // (a dangling `mcp__<server>__<tool>` reference). Reject the unwire
+  // here with a clear error so the operator removes the tools[] entries
+  // first instead of getting a FATAL when they restart.
+  if (Array.isArray(cfg.tools)) {
+    const underscored = opts.serverName.replace(/-/g, '_');
+    const referencing = (cfg.tools as unknown[]).filter(
+      (t): t is string => typeof t === 'string' && t.startsWith(`mcp__${underscored}__`),
+    );
+    if (referencing.length > 0) {
+      throw new Error(
+        `cannot unwire "${opts.serverName}": tools[] still references ${referencing.join(', ')}. Remove those entries from tools[] first.`,
+      );
+    }
+  }
 
   const newList = existing.filter(e => e.name !== opts.serverName);
   const merged: Record<string, unknown> =

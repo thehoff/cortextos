@@ -32,20 +32,21 @@ export async function withMcpLock<T>(key: string, fn: () => Promise<T>): Promise
 
   let release!: () => void;
   const ours = new Promise<void>(resolve => { release = resolve; });
-  queues.set(key, previous.then(() => ours));
+  // Capture the chained promise we put in the map so the cleanup
+  // step can compare against the SAME reference. Codex pass-2 PR6-015:
+  // the previous implementation re-evaluated `ours.then(...)` in the
+  // cleanup, which always created a fresh Promise — the identity check
+  // never matched and the map entry was never freed (memory leak).
+  const ourChained = previous.then(() => ours);
+  queues.set(key, ourChained);
 
   try {
     await previous;
     return await fn();
   } finally {
     release();
-    // Clean up the map entry if we're the tail (last in queue) so a
-    // long-running app doesn't accumulate dead Promise.resolve() entries.
-    // The `===` check makes us a no-op if another caller has already
-    // appended to the queue.
     queueMicrotask(() => {
-      const current = queues.get(key);
-      if (current === ours.then(() => undefined)) {
+      if (queues.get(key) === ourChained) {
         queues.delete(key);
       }
     });

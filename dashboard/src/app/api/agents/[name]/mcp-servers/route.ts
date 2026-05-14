@@ -21,7 +21,7 @@
  * disable/enable restart command verbatim.)
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { getFrameworkRoot, getAllAgents, getAgentDir } from '@/lib/config';
 import { wireMcpServerToAgent, type McpServerSpec } from '@/lib/mcp/fs';
@@ -84,10 +84,33 @@ export async function POST(
   if (typeof serverName !== 'string' || serverName.length === 0 || serverName.length > 32) {
     return NextResponse.json({ error: 'name must be a string of length 1..32' }, { status: 400 });
   }
+  // Name-shape check at the route layer (kebab-lowercase) so a bad name
+  // returns 400 BEFORE we hit the dist/index.js existence check below
+  // (which would otherwise mask the shape error as a 422 build-missing
+  // error for the operator).
+  if (!/^[a-z][a-z0-9-]*$/.test(serverName)) {
+    return NextResponse.json({ error: 'name must match /^[a-z][a-z0-9-]*$/' }, { status: 400 });
+  }
 
   // Default: assume the server lives at <projectRoot>/mcp-servers/<name>/dist/index.js,
   // built via init-mcp + npm run build. Operator can override command/args.
   const defaultArg = join(getFrameworkRoot(), 'mcp-servers', serverName, 'dist', 'index.js');
+  const usingDefaultPath =
+    !Array.isArray(body.args) &&
+    (typeof body.command !== 'string' || body.command === 'node');
+
+  // Codex pass-2 PR6-018: when the route falls back to the canonical
+  // scaffold path, hard-check that dist/index.js actually exists. The
+  // UI shows a soft warning; this is the API-layer gate that catches
+  // curl/script callers who'd otherwise wire a config that ENOENTs the
+  // agent at boot.
+  if (usingDefaultPath && !existsSync(defaultArg)) {
+    return NextResponse.json({
+      error: `mcp server "${serverName}" has not been built — ${defaultArg} does not exist`,
+      hint: `cd ${join(getFrameworkRoot(), 'mcp-servers', serverName)} && npm install && npm run build`,
+    }, { status: 422 });
+  }
+
   const serverEntry: McpServerSpec = {
     name: serverName,
     command: typeof body.command === 'string' && body.command.length > 0

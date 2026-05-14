@@ -136,12 +136,18 @@ describe('POST /api/mcp-servers', () => {
     expect(body.error).toMatch(/not allowed/);
   });
 
-  it('accepts bearer-authed requests without an Origin header', async () => {
+  it('does NOT accept Bearer-only auth — PR6-014 closed the shortcut', async () => {
+    // The previous implementation allowed `Authorization: Bearer ...` to
+    // bypass the Origin check without actually verifying the JWT. Codex
+    // pass-2 PR6-014 flagged this as load-bearing-wrong even though the
+    // null-session check downstream made it not currently exploitable.
+    // The cookie + Origin path is the only writeable path now; a bearer
+    // header without a valid session AND a missing Origin still 403s.
     const res = await route.POST(new NextRequest('http://localhost:3000/api/mcp-servers', {
       method: 'POST',
       body: JSON.stringify({ name: 'bearer-test' }),
       headers: { 'content-type': 'application/json', authorization: 'Bearer x.y.z' },
     }));
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
   });
 });

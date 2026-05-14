@@ -55,21 +55,19 @@ export async function requireWriteAuth(req: NextRequest): Promise<NextResponse |
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  // Bearer tokens are validated by NextAuth via the providers chain;
-  // by this point if a bearer was used the session would already be
-  // present and we trust it. For cookie-authed requests, additionally
-  // enforce Origin to mitigate CSRF.
-  const auth_header = req.headers.get('authorization');
-  if (auth_header && auth_header.toLowerCase().startsWith('bearer ')) {
-    return null;
-  }
-
-  // Cookie-authed request. The Origin header is set by browsers on
-  // non-GET requests (and on some GETs). A missing Origin on a write
-  // route is suspicious — reject.
+  // Codex pass-2 PR6-014: the previous implementation short-circuited
+  // the Origin check when an Authorization: Bearer header was present,
+  // on the theory that bearer tokens would have been verified upstream.
+  // That was wrong — `auth()` only verifies the NextAuth session cookie;
+  // it does not consume or verify mobile bearer JWTs. The shortcut left
+  // a path that skipped Origin validation without completing real
+  // verification. PR6 supports cookie auth only — the Origin allowlist
+  // applies to every write request that reaches here. If a future PR
+  // adds bearer-token support, the verification step must happen BEFORE
+  // any decision to bypass the Origin check.
   const origin = req.headers.get('origin');
   if (!origin) {
-    return NextResponse.json({ error: 'origin header required for cookie-authed writes' }, { status: 403 });
+    return NextResponse.json({ error: 'origin header required for writes' }, { status: 403 });
   }
   if (!allowedOrigins().has(origin)) {
     return NextResponse.json({ error: `origin ${origin} not allowed` }, { status: 403 });

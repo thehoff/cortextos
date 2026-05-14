@@ -141,4 +141,27 @@ describe('unwireMcpServerFromAgent', () => {
     const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
     expect(cfg.mcp_servers).toBeUndefined();
   });
+
+  it('rejects unwire when tools[] still references the server (PR6-013)', () => {
+    writeFileSync(configPath, JSON.stringify({
+      endpoint: 'http://x', model: 'm',
+      mcp_servers: [{ name: 'srv-with-tool', command: 'node' }],
+      tools: ['mcp__srv_with_tool__echo'],
+    }));
+    expect(() => unwireMcpServerFromAgent({ agentConfigPath: configPath, serverName: 'srv-with-tool' }))
+      .toThrow(/tools\[\] still references/);
+    // Config untouched on rejection.
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
+    expect(cfg.mcp_servers.length).toBe(1);
+  });
+
+  it('allows unwire when tools[] no longer references the server', () => {
+    writeFileSync(configPath, JSON.stringify({
+      endpoint: 'http://x', model: 'm',
+      mcp_servers: [{ name: 'srv', command: 'node' }],
+      tools: ['get_current_time'], // builtin, unrelated
+    }));
+    expect(() => unwireMcpServerFromAgent({ agentConfigPath: configPath, serverName: 'srv' }))
+      .not.toThrow();
+  });
 });

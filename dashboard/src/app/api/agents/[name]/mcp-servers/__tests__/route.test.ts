@@ -48,6 +48,14 @@ beforeEach(async () => {
   writeFileSync(join(agentDir, 'config.json'), JSON.stringify({
     endpoint: 'http://localhost:8080', model: 'test',
   }));
+  // Seed scaffold + built dist/index.js for the servers tests will wire.
+  // Codex pass-2 PR6-018: the wire route now hard-checks dist/index.js
+  // existence when using the default path. Tests must seed it.
+  for (const srv of ['time-oracle', 'srv-x', 'srv']) {
+    const serverDir = join(tmp, 'mcp-servers', srv, 'dist');
+    mkdirSync(serverDir, { recursive: true });
+    writeFileSync(join(serverDir, 'index.js'), 'fake');
+  }
   route = await import('../route');
 });
 
