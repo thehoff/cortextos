@@ -318,4 +318,69 @@ describe('runner config validation', () => {
       });
     });
   });
+
+  // PR5 MCP server config validation (Codex pass-3 findings PR5-026 + PR5-027).
+  describe('PR5 mcp_servers validation', () => {
+    const baseCfg = { endpoint: 'http://x', model: 'm' };
+
+    describe('command guards (PR5-026)', () => {
+      it('accepts a plain interpreter name', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', args: ['./mcp-servers/srv/dist/index.js'] }],
+        })).not.toThrow();
+      });
+      it('rejects a command containing ".." (path-traversal guard)', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: '../../bin/node' }],
+        })).toThrow(/must not contain "\.\."/);
+      });
+      it('rejects a command ending in ".json" (operator confused with config-file path)', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: '/etc/some-config.json' }],
+        })).toThrow(/must not end with "\.json"/);
+      });
+      it('rejects ".JSON" suffix case-insensitively', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: '/tmp/x.JSON' }],
+        })).toThrow(/must not end with "\.json"/);
+      });
+    });
+
+    describe('cwd guards (PR5-027)', () => {
+      it('accepts an absolute cwd', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', cwd: '/abs/path' }],
+        })).not.toThrow();
+      });
+      it('accepts an explicit "./"-relative cwd', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', cwd: './sub' }],
+        })).not.toThrow();
+      });
+      it('accepts an explicit "../"-relative cwd', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', cwd: '../sibling' }],
+        })).not.toThrow();
+      });
+      it('rejects a bare relative cwd (no leading "./" or "../")', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', cwd: 'mcp-servers/foo' }],
+        })).toThrow(/cwd must be absolute.*"\.\/" or "\.\.\/"/);
+      });
+      it('still rejects empty string', () => {
+        expect(() => validateConfig({
+          ...baseCfg,
+          mcp_servers: [{ name: 'srv', command: 'node', cwd: '' }],
+        })).toThrow(/cwd must be a non-empty string/);
+      });
+    });
+  });
 });

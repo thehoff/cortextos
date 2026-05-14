@@ -159,6 +159,21 @@ export function validateConfig(raw: unknown): RunnerConfig {
       if (typeof s.command !== 'string' || s.command.length === 0 || s.command.length > 256) {
         throw new Error(`config.json: mcp_servers["${s.name}"].command must be a non-empty string of length <= 256`);
       }
+      // PR5-026 (Codex pass-3): PLAN §5.1 trivially-wrong-input guards.
+      // Operators can run arbitrary subprocesses through this field — that's
+      // intentional — but ".." (path-traversal) and a .json suffix (operator
+      // confused the command field with a config-file path) are mistake
+      // shapes worth catching at boot rather than as an opaque ENOENT.
+      if (s.command.includes('..')) {
+        throw new Error(
+          `config.json: mcp_servers["${s.name}"].command must not contain ".." (path-traversal guard)`,
+        );
+      }
+      if (s.command.toLowerCase().endsWith('.json')) {
+        throw new Error(
+          `config.json: mcp_servers["${s.name}"].command must not end with ".json" — set "command" to the interpreter (e.g. "node", "tsx") and put the script in "args"`,
+        );
+      }
       if (s.args !== undefined) {
         if (!Array.isArray(s.args) || s.args.length > 32) {
           throw new Error(`config.json: mcp_servers["${s.name}"].args must be an array of length <= 32`);
@@ -182,8 +197,23 @@ export function validateConfig(raw: unknown): RunnerConfig {
           }
         }
       }
-      if (s.cwd !== undefined && (typeof s.cwd !== 'string' || s.cwd.length === 0 || s.cwd.length > 1024)) {
-        throw new Error(`config.json: mcp_servers["${s.name}"].cwd must be a non-empty string of length <= 1024`);
+      if (s.cwd !== undefined) {
+        if (typeof s.cwd !== 'string' || s.cwd.length === 0 || s.cwd.length > 1024) {
+          throw new Error(`config.json: mcp_servers["${s.name}"].cwd must be a non-empty string of length <= 1024`);
+        }
+        // PR5-027 (Codex pass-3): PLAN §5.1 — cwd must be absolute or
+        // an explicit "./" / "../"-prefixed relative path that the
+        // manager will resolve against the agent directory. Plain
+        // relative paths like "mcp-servers/foo" silently resolve
+        // against the runner's process cwd, which is rarely what
+        // operators expect.
+        const isAbsolute = s.cwd.startsWith('/');
+        const isExplicitRelative = s.cwd.startsWith('./') || s.cwd.startsWith('../');
+        if (!isAbsolute && !isExplicitRelative) {
+          throw new Error(
+            `config.json: mcp_servers["${s.name}"].cwd must be absolute (starting with "/") or start with "./" or "../" (got ${JSON.stringify(s.cwd)})`,
+          );
+        }
       }
       if (s.tool_timeout_sec !== undefined && (typeof s.tool_timeout_sec !== 'number' || s.tool_timeout_sec < 1 || s.tool_timeout_sec > 600)) {
         throw new Error(`config.json: mcp_servers["${s.name}"].tool_timeout_sec must be a number in [1, 600]`);

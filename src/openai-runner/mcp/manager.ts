@@ -14,6 +14,7 @@
  * BEFORE awaiting the connect handshake, so a shutdown call at any
  * point during boot has access to every spawned child.
  */
+import { resolve as pathResolve } from 'path';
 import { beginMcpConnect, resolveMcpServerEnv } from './client.js';
 import type { ConnectedMcpClient, McpServerSpec, McpToolDescriptor, McpRoute } from './types.js';
 
@@ -49,6 +50,13 @@ export interface BootMcpManagerOptions {
    * (Codex pass-1 PR5-002).
    */
   onBeforeFirstSpawn?: (handle: { shutdown: () => Promise<void> }) => void;
+  /**
+   * Optional sink for $VAR-resolved secret values. The manager populates
+   * this as it walks specs (BEFORE awaiting any spawn), so callers can
+   * redact FATAL error messages with the collected secrets even when
+   * boot rejects mid-flight (Codex pass-3 PR5-025).
+   */
+  secretsSink?: Set<string>;
 }
 
 const SHUTDOWN_TOTAL_BUDGET_MS = 5_000;
@@ -68,7 +76,9 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
   const clients = new Map<string, ConnectedMcpClient>();
   const routes = new Map<string, McpRoute>();
   const tools: { name: string; description?: string; inputSchema?: unknown }[] = [];
-  const secrets = new Set<string>();
+  // PR5-025 (Codex pass-3): reuse the caller's Set if provided so resolved
+  // $VAR secrets remain visible after a rejecting boot.
+  const secrets = opts.secretsSink ?? new Set<string>();
   const childCleanups: Array<() => Promise<void>> = [];
   let closing = false;
 
@@ -113,13 +123,21 @@ export async function bootMcpManager(opts: BootMcpManagerOptions): Promise<McpMa
   const results = await Promise.allSettled(opts.specs.map(async (spec) => {
     const { env, secrets: specSecrets } = resolveMcpServerEnv(spec, opts.runnerEnv);
     for (const s of specSecrets) secrets.add(s);
+    // PR5-027 (Codex pass-3): resolve a relative cwd against the runner's
+    // base cwd (the agent dir) so a `./mcp-servers/...` config entry lands
+    // at <agentDir>/mcp-servers/... regardless of the runner's process
+    // cwd. Absolute cwds pass through verbatim. validateConfig already
+    // rejected forms that aren't absolute or "./"/"../"-prefixed.
+    const resolvedCwd = spec.cwd
+      ? (spec.cwd.startsWith('/') ? spec.cwd : pathResolve(opts.cwd, spec.cwd))
+      : opts.cwd;
     // PR5-013 fix: register the REAL cleanup synchronously, BEFORE the
     // connect await. beginMcpConnect returns the cleanup handle alongside
     // the in-flight Promise. If shutdown() fires while the connect is
     // still pending, the cleanup actually closes the transport.
     const { ready, cleanup } = beginMcpConnect(spec, {
       env,
-      cwd: spec.cwd ?? opts.cwd,
+      cwd: resolvedCwd,
       bootTimeoutMs: opts.bootTimeoutMs,
     });
     childCleanups.push(cleanup);

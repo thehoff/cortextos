@@ -6,7 +6,7 @@ import * as readline from 'readline';
 import { sendMessage, ackInbox, updateHeartbeat, logEvent } from '../bus/index.js';
 import { resolvePaths } from '../utils/paths.js';
 import { stripControlChars } from '../utils/validate.js';
-import { callLlmWithTools } from '../openai-runner/loop.js';
+import { callLlmWithTools, redactSecrets } from '../openai-runner/loop.js';
 import { sanitizeForLlmReplay, type ThreadMessage } from '../openai-runner/sanitize-thread-replay.js';
 import {
   validateConfig,
@@ -291,27 +291,64 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
     // signal trap access to a still-booting manager via partialMcpShutdown.
     let mcpManager: McpManager | undefined;
     let partialMcpShutdown: (() => Promise<void>) | undefined;
-    const shutdown = (): void => {
+    // PR5-025 (Codex pass-3): sink for $VAR-resolved secrets. Populated by
+    // the manager as it walks specs so we have them in hand even when boot
+    // rejects mid-flight — the catch path below redacts the FATAL stderr
+    // line through this set.
+    const collectedMcpSecrets = new Set<string>();
+    const SHUTDOWN_OUTER_BUDGET_MS = 5_000;
+    // PR5-024 (Codex pass-3 BLOCKER) side-effect: with the SIGTERM
+    // handler now awaiting MCP teardown, a Promise rejected concurrently
+    // by the in-flight bootMcpManager (when manager.shutdown closes its
+    // transports the SDK fires `Connection closed`) can land as an
+    // "unhandledRejection" between async microtasks even though the boot
+    // call site has its own try/catch. Catching it here keeps the signal
+    // handler in control of the exit code instead of letting Node's
+    // default termination kick in (exit 1 from --unhandled-rejections,
+    // or 143 if the process is racing the SIGTERM default). The catch
+    // is non-suppressive: anything genuinely unexpected still lands in
+    // stderr so it surfaces in production logs.
+    process.on('uncaughtException', (err) => {
+      if (!shuttingDown) {
+        process.stderr.write(`[openai-runner] uncaught: ${err instanceof Error ? err.stack : String(err)}\n`);
+      }
+    });
+    process.on('unhandledRejection', (reason) => {
+      if (!shuttingDown) {
+        process.stderr.write(`[openai-runner] unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}\n`);
+      }
+    });
+    const shutdown = async (): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
+      process.stderr.write(`[openai-runner] shutdown begin (mcp=${mcpManager ? 'ready' : (partialMcpShutdown ? 'booting' : 'none')})\n`);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       safeUpdateHeartbeat('stopping', currentTask);
       safeLogEvent('milestone', 'agent_offline', 'info', { agent: agentName, model });
-      // Best-effort MCP teardown. We don't await because shutdown() is sync
-      // (called from signal handlers); the manager's internal 5s budget
-      // bounds the wait. PR5 Codex pass-1 PR5-002: partialMcpShutdown is set
-      // BEFORE the first spawn so an early SIGTERM still hits it.
+      // PR5-024 (Codex pass-3 BLOCKER): await MCP teardown with an outer
+      // 5s race so a stuck child can't block SIGTERM compliance. The
+      // manager has its own internal budget but the outer race is
+      // defense-in-depth for unexpected wedge paths.
       const closer = mcpManager?.shutdown ?? partialMcpShutdown;
       if (closer) {
-        void closer().catch(() => undefined);
+        await Promise.race([
+          closer().catch(() => undefined),
+          new Promise<void>(resolve => setTimeout(resolve, SHUTDOWN_OUTER_BUDGET_MS)),
+        ]);
       }
+      process.stderr.write('[openai-runner] shutdown done\n');
       process.exit(0);
     };
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', () => { process.stderr.write('[openai-runner] sigterm\n'); void shutdown(); });
+    process.on('SIGINT', () => { process.stderr.write('[openai-runner] sigint\n'); void shutdown(); });
 
     // PR5: boot MCP servers between config-load and READY. Failures FATAL.
     if (cfg.mcp_servers && cfg.mcp_servers.length > 0) {
+      // Emit a stable marker AFTER the signal handlers are registered but
+      // BEFORE the boot await. Tests use this to synchronize SIGTERM
+      // delivery to a known mid-boot point — without it they would race
+      // tsx's startup latency.
+      process.stderr.write('[openai-runner] MCP_BOOT_BEGIN\n');
       const mcpBootTimeoutMs = (cfg.mcp_boot_timeout_sec ?? 30) * 1000;
       // Codex pass-2 PR5-016: fold cfg.tool_timeout_sec into the chain so an
       // operator who set a global per-tool timeout in PR3 actually affects
@@ -326,6 +363,10 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
           builtinToolNames: new Set(Object.keys(TOOL_REGISTRY)),
           runnerEnv: process.env,
           onBeforeFirstSpawn: (handle) => { partialMcpShutdown = handle.shutdown; },
+          // PR5-025 (Codex pass-3): give the manager our pre-allocated
+          // secrets Set so resolved $VAR values are visible to the
+          // FATAL-error redaction below even if boot rejects.
+          secretsSink: collectedMcpSecrets,
         });
         // Phase-2: any tools[] entry that was syntactically mcp__<server>__<tool>
         // at config-validation time must now exist in the route table. A typo
@@ -344,7 +385,12 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
           enabledTools = [...Object.keys(TOOL_REGISTRY), ...mcpManager.routes.keys()];
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const rawMsg = err instanceof Error ? err.message : String(err);
+        // PR5-025 (Codex pass-3 MAJOR): redact API key + any $VAR-resolved
+        // secrets that were collected before boot rejected. Without this,
+        // a partial spec-walk that resolved a SECRET_KEY before a later
+        // spec hung could echo that key into the FATAL stderr line.
+        const msg = redactSecrets(rawMsg, apiKey, collectedMcpSecrets);
         process.stderr.write(`FATAL: MCP boot failed: ${msg}\n`);
         try { await mcpManager?.shutdown(); } catch { /* */ }
         try { await partialMcpShutdown?.(); } catch { /* */ }
@@ -494,6 +540,6 @@ export const runOpenAIAgentCommand = new Command('run-openai-agent')
         }
       }
     } finally {
-      shutdown();
+      await shutdown();
     }
   });

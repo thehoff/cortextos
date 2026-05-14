@@ -16,6 +16,8 @@ const FIXTURE_DIR = join(REPO_ROOT, 'tests', 'fixtures', 'mcp');
 const ECHO_FIXTURE = join(FIXTURE_DIR, 'server-echo.ts');
 const HANG_FIXTURE = join(FIXTURE_DIR, 'server-hang.ts');
 const BAD_NAME_FIXTURE = join(FIXTURE_DIR, 'server-bad-name.ts');
+const IMAGE_FIXTURE = join(FIXTURE_DIR, 'server-image-content.ts');
+const ERROR_LEAK_FIXTURE = join(FIXTURE_DIR, 'server-error-leak.ts');
 
 describe('MCP client wrapper', { timeout: 20_000 }, () => {
   it('connects, lists tools, and round-trips a text echo call', async () => {
@@ -55,6 +57,58 @@ describe('MCP client wrapper', { timeout: 20_000 }, () => {
       // (the connection wasn't poisoned).
       const result = await client.call('echo', { text: 'still-alive' }, 5000);
       expect(result).toBe('still-alive');
+    } finally {
+      await client.disconnect();
+    }
+  });
+
+  // Codex pass-3 PR5-028: non-text MCP results are implemented but were
+  // previously untested. These pin the rejection path so a future SDK
+  // upgrade or transport change can't silently start forwarding image
+  // bytes to the LLM (which would be tokens-wasted at best, secret
+  // leakage at worst).
+  it('rejects an image-only MCP tool result as unsupported non-text content (PR5-028)', async () => {
+    const spec: McpServerSpec = { name: 'img', command: TSX, args: [IMAGE_FIXTURE] };
+    const { env } = resolveMcpServerEnv(spec, process.env);
+    const client = await connectMcpServer(spec, { env, cwd: REPO_ROOT, bootTimeoutMs: 15000 });
+    try {
+      await expect(client.call('image_only', {}, 5000))
+        .rejects.toThrow(/unsupported non-text content/);
+    } finally {
+      await client.disconnect();
+    }
+  });
+
+  it('rejects a mixed text+image MCP tool result as unsupported non-text content (PR5-028)', async () => {
+    const spec: McpServerSpec = { name: 'img', command: TSX, args: [IMAGE_FIXTURE] };
+    const { env } = resolveMcpServerEnv(spec, process.env);
+    const client = await connectMcpServer(spec, { env, cwd: REPO_ROOT, bootTimeoutMs: 15000 });
+    try {
+      await expect(client.call('mixed', {}, 5000))
+        .rejects.toThrow(/unsupported non-text content/);
+    } finally {
+      await client.disconnect();
+    }
+  });
+
+  // Codex pass-3 PR5-029: the client surfaces isError:true MCP results as
+  // a thrown Error containing the text payload. The runner (loop.ts) then
+  // pipes that error through redactSecrets() so $VAR-resolved secrets in
+  // the text don't reach the LLM. This unit test pins that the secret
+  // value DOES flow through the raw client error (so redaction is
+  // necessary upstream); the integration test pins that the runner's
+  // redaction prevents the leak end-to-end.
+  it('surfaces isError:true MCP result text via thrown Error so redaction can run upstream (PR5-029)', async () => {
+    const spec: McpServerSpec = {
+      name: 'leak', command: TSX, args: [ERROR_LEAK_FIXTURE],
+      env: { MCP_LEAK_SECRET: 'sk-fake-1234' },
+    };
+    const { env, secrets } = resolveMcpServerEnv(spec, { ...process.env, MCP_LEAK_SECRET: 'sk-fake-1234' });
+    expect(secrets.size).toBeGreaterThanOrEqual(0); // env wasn't $VAR so no tracking here
+    const client = await connectMcpServer(spec, { env, cwd: REPO_ROOT, bootTimeoutMs: 15000 });
+    try {
+      await expect(client.call('fail_with_secret', {}, 5000))
+        .rejects.toThrow(/sk-fake-1234/);
     } finally {
       await client.disconnect();
     }

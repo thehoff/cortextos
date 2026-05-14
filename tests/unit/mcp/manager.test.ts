@@ -171,6 +171,92 @@ describe('bootMcpManager', { timeout: 30_000 }, () => {
   });
 });
 
+// Codex pass-3 PR5-025: secretsSink lets the runner redact FATAL stderr
+// lines that include $VAR-resolved values, even when boot rejects before
+// the manager is returned.
+describe('secretsSink (Codex pass-3 PR5-025)', { timeout: 30_000 }, () => {
+  it('exposes resolved $VAR secrets through the caller-provided sink even when boot fails', async () => {
+    const sink = new Set<string>();
+    const SECRET_VAL = 'sk-from-runner-env-9876';
+    const fakeRunnerEnv: NodeJS.ProcessEnv = { ...process.env, PR5_TEST_SINK_SECRET: SECRET_VAL };
+    await expect(bootMcpManager({
+      // First spec has a resolvable $VAR (so the secret gets collected
+      // before the second spec hangs and forces rollback).
+      specs: [
+        { name: 'ok', command: TSX, args: [ECHO_FIXTURE], env: { TOKEN: '$PR5_TEST_SINK_SECRET' } },
+        { name: 'bad', command: TSX, args: [HANG_FIXTURE] },
+      ],
+      cwd: REPO_ROOT,
+      bootTimeoutMs: 600,
+      defaultToolTimeoutMs: 5_000,
+      builtinToolNames: BUILTIN_NAMES,
+      runnerEnv: fakeRunnerEnv,
+      secretsSink: sink,
+    })).rejects.toBeDefined();
+    expect(sink.has(SECRET_VAL)).toBe(true);
+  });
+
+  it('reuses the same sink instance the manager exposes as secrets on success', async () => {
+    const sink = new Set<string>();
+    const SECRET_VAL = 'sk-runner-success-1234';
+    const manager = await bootMcpManager({
+      specs: [{ name: 'srv', command: TSX, args: [ECHO_FIXTURE], env: { TOKEN: '$PR5_TEST_SINK_SUCCESS' } }],
+      cwd: REPO_ROOT,
+      bootTimeoutMs: 15_000,
+      defaultToolTimeoutMs: 5_000,
+      builtinToolNames: BUILTIN_NAMES,
+      runnerEnv: { ...process.env, PR5_TEST_SINK_SUCCESS: SECRET_VAL },
+      secretsSink: sink,
+    });
+    try {
+      expect(manager.secrets.has(SECRET_VAL)).toBe(true);
+      expect(sink.has(SECRET_VAL)).toBe(true);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
+// Codex pass-3 PR5-027: explicit-relative cwds must be resolved against
+// the runner's base cwd (the agent dir), not the runner process's cwd.
+describe('cwd resolution (Codex pass-3 PR5-027)', { timeout: 30_000 }, () => {
+  it('boots successfully with an absolute cwd that points at the repo root', async () => {
+    const manager = await bootMcpManager({
+      specs: [{ name: 'srv', command: TSX, args: [ECHO_FIXTURE], cwd: REPO_ROOT }],
+      cwd: '/nonsense/should-not-be-used',
+      bootTimeoutMs: 15_000,
+      defaultToolTimeoutMs: 5_000,
+      builtinToolNames: BUILTIN_NAMES,
+      runnerEnv: process.env,
+    });
+    try {
+      // Boot succeeded because the spec.cwd (absolute) overrode the bogus
+      // opts.cwd; if the manager had ignored spec.cwd it would have
+      // spawned in /nonsense and failed.
+      expect(manager.clients.size).toBe(1);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  it('boots successfully with an explicit relative cwd resolved against opts.cwd', async () => {
+    const manager = await bootMcpManager({
+      // cwd "./" is the most boring possible "./" form — resolves to opts.cwd.
+      specs: [{ name: 'srv', command: TSX, args: [ECHO_FIXTURE], cwd: './' }],
+      cwd: REPO_ROOT,
+      bootTimeoutMs: 15_000,
+      defaultToolTimeoutMs: 5_000,
+      builtinToolNames: BUILTIN_NAMES,
+      runnerEnv: process.env,
+    });
+    try {
+      expect(manager.clients.size).toBe(1);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+});
+
 describe('shutdown during boot (PR5-013 BLOCKER fix verification)', { timeout: 30_000 }, () => {
   it('cleanup runs even when shutdown fires while a server is still mid-handshake', async () => {
     // The hang fixture never responds to initialize; its child process
