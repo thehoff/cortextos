@@ -112,16 +112,15 @@ export async function POST(
     ...(body.env_inherit !== undefined ? { env_inherit: Boolean(body.env_inherit) } : {}),
   };
 
-  // Codex pass-2 PR6-018 + pass-3 PR6-021: hard-check that the
-  // canonical scaffold's dist/index.js exists IF the effective args
-  // reference it. The earlier check gated only on `command === 'node'`
-  // but the args default still pointed at the scaffold path even when
-  // command was something like 'tsx', letting curl/script callers wire
-  // a config that ENOENTs the agent at boot. Inspecting the effective
-  // serverEntry.args closes that bypass — the check fires for any
-  // command if the args were not explicitly overridden.
-  const argsExplicitlyOverridden = Array.isArray(body.args);
-  if (!argsExplicitlyOverridden && serverEntry.args?.includes(defaultArg) && !existsSync(defaultArg)) {
+  // Codex pass-2 PR6-018 + pass-3 PR6-021 + pass-4 PR6-022: hard-check
+  // that the canonical scaffold's dist/index.js exists IF the effective
+  // args reference it. The build-gate intentionally does NOT exempt
+  // explicit args — a caller crafting `args: ["<defaultArg>"]` directly
+  // (or any path that resolves to the missing scaffold dist) would
+  // otherwise persist a config that ENOENTs the agent at boot. The
+  // operator who genuinely wants to wire an unbuilt server points args
+  // at a different file.
+  if (serverEntry.args?.includes(defaultArg) && !existsSync(defaultArg)) {
     return NextResponse.json({
       error: `mcp server "${serverName}" has not been built — ${defaultArg} does not exist`,
       hint: `cd ${join(getFrameworkRoot(), 'mcp-servers', serverName)} && npm install && npm run build`,

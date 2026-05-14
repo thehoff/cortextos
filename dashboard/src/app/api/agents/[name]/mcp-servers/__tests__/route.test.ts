@@ -149,10 +149,10 @@ describe('POST /api/agents/[name]/mcp-servers', () => {
     expect(body.error).toMatch(/has not been built/);
   });
 
-  it('does NOT 422-block when args are explicitly overridden (PR6-021)', async () => {
-    // Operator explicitly passes args, so they're saying "I know what
-    // I'm doing; don't infer the scaffold path". The build-check
-    // should NOT fire here.
+  it('does NOT 422-block when args point at a path that exists (PR6-021)', async () => {
+    // Operator explicitly passes args at a path unrelated to the
+    // scaffold's missing dist/index.js. The build-check should NOT
+    // fire here — args don't reference the canonical scaffold path.
     const { req, ctx } = postReq('rag-1', {
       name: 'srv-explicit',
       command: 'tsx',
@@ -160,6 +160,24 @@ describe('POST /api/agents/[name]/mcp-servers', () => {
     });
     const res = await route.POST(req, ctx);
     expect(res.status).toBe(201);
+  });
+
+  // Codex pass-4 PR6-022: my pass-3 fix introduced a residual bypass —
+  // if the caller crafted `args: ["<defaultArg>"]` (or any value
+  // matching the canonical scaffold path), the explicit-args opt-out
+  // skipped the build-check and persisted a config that ENOENTs the
+  // agent. The gate is now scope-tight: it fires whenever the
+  // EFFECTIVE args contain defaultArg AND that path is missing,
+  // regardless of whether args were explicitly provided.
+  it('returns 422 even when caller explicitly references the missing scaffold path (PR6-022)', async () => {
+    const defaultArg = join(tmp, 'mcp-servers', 'srv-unbuilt', 'dist', 'index.js');
+    const { req, ctx } = postReq('rag-1', {
+      name: 'srv-unbuilt',
+      command: 'tsx',
+      args: [defaultArg],
+    });
+    const res = await route.POST(req, ctx);
+    expect(res.status).toBe(422);
   });
 
   it('returns 401 without a session', async () => {
