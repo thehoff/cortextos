@@ -24,8 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { getFrameworkRoot, getAllAgents, getAgentDir } from '@/lib/config';
-import { wireMcpServerToAgent } from '../../../../../../../src/mcp/wire';
-import type { McpServerSpec } from '../../../../../../../src/openai-runner/config';
+import { wireMcpServerToAgent, type McpServerSpec } from '@/lib/mcp/fs';
 import { withMcpLock } from '@/lib/mcp-locks';
 import { requireWriteAuth } from '@/lib/mcp-auth';
 
@@ -135,7 +134,9 @@ export async function POST(
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.startsWith('config.json:')) {
+      // Vendored validator throws messages starting with "mcp_servers[]"
+      // or "MCP server name". Both map to 400 — bad client input.
+      if (msg.startsWith('mcp_servers[]') || msg.startsWith('MCP server name') || msg.startsWith('config.json:')) {
         return NextResponse.json({ error: msg }, { status: 400 });
       }
       if (msg.includes('not valid JSON') || msg.includes('not a JSON object')) {

@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { getFrameworkRoot } from '@/lib/config';
-import { writeMcpScaffold, ScaffoldDestExistsError } from '../../../../../src/mcp/scaffold';
+import { writeMcpScaffold, ScaffoldDestExistsError } from '@/lib/mcp/fs';
 import { withMcpLock } from '@/lib/mcp-locks';
 import { requireWriteAuth } from '@/lib/mcp-auth';
 

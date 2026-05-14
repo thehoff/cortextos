@@ -116,7 +116,7 @@ describe('POST /api/agents/[name]/mcp-servers', () => {
     const r = await route.POST(...Object.values(postReq('rag-1', { name: 'Bad-Caps-srv' })) as Parameters<typeof route.POST>);
     expect(r.status).toBe(400);
     const body = await r.json();
-    expect(body.error).toMatch(/config\.json|name must/);
+    expect(body.error).toMatch(/mcp_servers|name must/);
   });
 
   it('returns 401 without a session', async () => {

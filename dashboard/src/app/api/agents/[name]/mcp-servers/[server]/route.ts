@@ -8,7 +8,7 @@
  * restart-hint contract as the wire route.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { unwireMcpServerFromAgent } from '../../../../../../../../src/mcp/unwire';
+import { unwireMcpServerFromAgent } from '@/lib/mcp/fs';
 import { withMcpLock } from '@/lib/mcp-locks';
 import { requireWriteAuth } from '@/lib/mcp-auth';
 import { resolveAgentConfigPath } from '../route';
