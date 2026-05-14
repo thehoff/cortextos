@@ -93,12 +93,13 @@ export interface ConnectInProgress {
   /** Idempotent close. Safe to call concurrently with `ready` resolution (Codex pass-2 PR5-013). */
   cleanup: () => Promise<void>;
   /**
-   * Snapshot the child process's PID. Returns null before transport.start()
-   * has spawned the child and ALSO after the SDK's close() nulls
-   * `_process`. Used by the manager's force-kill-on-timeout path
-   * (Codex pass-5 PR5-044): callers should NEVER raw-PID-kill after
-   * close() has returned because the kernel may have reused the PID
-   * — getPid() will return null in that case.
+   * Snapshot the child process's PID. Returns null before the SDK has
+   * spawned the child AND after `cleanup()` has resolved (Codex pass-6
+   * PR5-046 clears the cache once `client.close()` returns, because
+   * after that the kernel is free to recycle the pid). Used by the
+   * manager's force-kill-on-timeout path: only children whose cleanup
+   * is still in-flight surface a non-null pid, so the kill cannot
+   * land on a recycled PID belonging to an unrelated process.
    */
   getPid: () => number | null;
 }
@@ -169,6 +170,13 @@ export function beginMcpConnect(
     // Force-kill on cleanup-abandonment is handled by the manager via
     // getPid() + a race-timeout check (Codex pass-5 PR5-044 + PR5-045).
     try { await client.close(); } catch { /* swallow — already errored */ }
+    // Codex pass-6 PR5-046: clear the cached pid AFTER close() resolves.
+    // The SDK confirms child death before close() returns, so the
+    // kernel is free to recycle the pid; a subsequent getPid() must
+    // not return a value that could now belong to an unrelated
+    // process. The manager's force-kill path therefore only fires
+    // against in-flight cleanups (close() not yet resolved).
+    capturedPid = null;
   };
   const getPid = (): number | null => capturedPid;
 

@@ -7,7 +7,8 @@
  * PID synchronously on startup and never responds to `initialize`, with
  * a long mcp_boot_timeout_sec. Send SIGTERM well before boot would
  * naturally fail. Assert:
- *   - Runner exits within 6s of the signal (NOT after the boot timeout).
+ *   - Runner exits within 12s of the signal (NOT after the boot timeout —
+ *     manager's worst-case is ~6s of teardown + headroom; PR5-050).
  *   - The hang subprocess (whose PID the fixture recorded before the
  *     SDK handshake even began) is no longer alive after the runner
  *     exits. This is the substantive PR5-024 anti-leak property — the
@@ -95,7 +96,7 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
     try { rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* */ }
   });
 
-  it('exits within 6s of SIGTERM even when boot is mid-flight', async () => {
+  it('exits within 12s of SIGTERM even when boot is mid-flight', async () => {
     proc = spawn(TSX_BIN, [CLI_SRC, 'run-openai-agent'], {
       env: {
         ...process.env, HOME: tempRoot,
@@ -144,8 +145,12 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
 
     const signalStart = Date.now();
     proc.kill('SIGTERM');
+    // Codex pass-6 PR5-050: the runner's outer shutdown budget is 10s
+    // (5s manager race + 1s force-kill drain + headroom). Wait 12s
+    // before declaring a hang to leave the substantive PID-reap
+    // assertion below as the meaningful check.
     await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('runner did not exit within 6s of SIGTERM-during-boot')), 6_000);
+      const t = setTimeout(() => reject(new Error('runner did not exit within 12s of SIGTERM-during-boot')), 12_000);
       proc!.once('exit', () => { clearTimeout(t); resolve(); });
     });
     const exitElapsed = Date.now() - signalStart;
@@ -155,9 +160,10 @@ describe('PR5 runner + MCP SIGTERM-during-boot', { timeout: 30_000 }, () => {
     // closer().catch(...)` then `process.exit(0)` synchronously, so the
     // SDK's client.close() never finished and the hang child stayed
     // alive past the parent. Codex pass-4 PR5-041: only the PID check
-    // catches that regression; the runner-exits-within-6s budget alone
-    // is satisfied by both the broken AND the fixed forms.
-    expect(exitElapsed).toBeLessThan(6_000);
+    // catches that regression. Codex pass-6 PR5-050: the production
+    // shutdown budget is 10s outer + 1s drain, so the runner can
+    // legitimately take up to ~11s under worst-case manager timing.
+    expect(exitElapsed).toBeLessThan(12_000);
     expect(stderr).toMatch(/\[openai-runner] sigterm/);
 
     // Allow the kernel time to reap the rolled-back child after the
