@@ -91,9 +91,9 @@ export function McpServerCreateDialog({ trigger, onCreated }: Props): React.Reac
         {success ? (
           <div className="space-y-2 text-sm">
             <p className="text-green-600 dark:text-green-400">Created at:</p>
-            <pre className="rounded bg-muted p-2 text-xs">{success.dir}</pre>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">{success.dir}</pre>
             <p>Next, build it:</p>
-            <pre className="rounded bg-muted p-2 text-xs">{success.buildHint}</pre>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">{success.buildHint}</pre>
             <p className="text-muted-foreground">Then wire it from the agent's page.</p>
           </div>
         ) : (

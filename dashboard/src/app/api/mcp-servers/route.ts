@@ -14,7 +14,7 @@
  * writeMcpScaffold (Codex pass-1 PR6-002).
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { getFrameworkRoot } from '@/lib/config';
 import { writeMcpScaffold, ScaffoldDestExistsError } from '@/lib/mcp/fs';
@@ -89,6 +89,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   return withMcpLock(`scaffold:${destDir}`, async () => {
     try {
+      // Cold-install ergonomics: the underlying writeMcpScaffold uses
+      // exclusive-create mkdir on destDir (per Codex pass-1 PR6-002), so
+      // we cannot use recursive:true there without losing the EEXIST
+      // atomicity guarantee. Instead, ensure the parent `mcp-servers/`
+      // directory exists once here. The first scaffold on a fresh
+      // project doesn't need a manual `mkdir -p`.
+      mkdirSync(mcpServersRoot(), { recursive: true });
       const result = writeMcpScaffold({ serverName: name, destDir });
       return NextResponse.json(
         {
