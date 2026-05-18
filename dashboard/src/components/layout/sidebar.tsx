@@ -22,6 +22,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { useOrgBranding } from '@/components/org-theme-provider';
 
 interface NavItem {
   label: string;
@@ -72,6 +73,7 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const { currentOrg } = useOrg();
+  const { brandName } = useOrgBranding();
 
   function orgHref(href: string) {
     if (currentOrg && currentOrg !== 'all') {
@@ -101,7 +103,7 @@ export function Sidebar({
         <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-bold">
           cO
         </div>
-        <span className="text-sm font-semibold tracking-tight">cortextOS</span>
+        <span className="text-sm font-semibold tracking-tight">{brandName}</span>
       </div>
 
       {/* Search trigger */}

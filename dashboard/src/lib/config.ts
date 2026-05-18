@@ -66,7 +66,23 @@ export function getEventsDir(org: string, agent: string): string {
   return path.join(CTX_ROOT, 'orgs', org, 'analytics', 'events', agent);
 }
 
+/**
+ * Defense-in-depth guard for path segments built from `org` / `agent`
+ * inputs. Today's callers come from disk-listed dir names (`getOrgs`,
+ * `getAllAgents`) and are de-facto safe, but a URL-sourced value
+ * (e.g. `?org=` query param) is one wiring slip away from these helpers.
+ * Reject `..` and absolute paths before any `path.join` so the segment
+ * can never escape its parent directory (Codex review of PR #28 flagged
+ * this as a latent traversal risk).
+ */
+function assertSafePathSegment(segment: string, label: string): void {
+  if (segment.includes('..') || segment.includes('/') || segment.includes('\\') || path.isAbsolute(segment)) {
+    throw new Error(`Invalid ${label} path segment: ${JSON.stringify(segment)}`);
+  }
+}
+
 export function getGoalsPath(org: string): string {
+  assertSafePathSegment(org, 'org');
   // Check framework root first (where the repo/source lives), then state dir
   const frameworkPath = path.join(CTX_FRAMEWORK_ROOT, 'orgs', org, 'goals.json');
   if (fs.existsSync(frameworkPath)) return frameworkPath;
@@ -77,11 +93,13 @@ export function getGoalsPath(org: string): string {
 }
 
 export function getOrgContextPath(org: string): string {
+  assertSafePathSegment(org, 'org');
   // Org metadata lives in the framework root (the repo), not the state dir
   return path.join(CTX_FRAMEWORK_ROOT, 'orgs', org, 'context.json');
 }
 
 export function getOrgBrandVoicePath(org: string): string {
+  assertSafePathSegment(org, 'org');
   return path.join(CTX_FRAMEWORK_ROOT, 'orgs', org, 'brand-voice.md');
 }
 

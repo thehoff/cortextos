@@ -5,6 +5,8 @@ import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 import { BottomNav } from './bottom-nav';
 import { OrgContext } from '@/hooks/use-org';
+import { OrgThemeProvider } from '@/components/org-theme-provider';
+import type { OrgTheme } from '@/lib/data/organization';
 import {
   Sheet,
   SheetContent,
@@ -12,10 +14,12 @@ import {
 
 interface DashboardShellProps {
   orgs: string[];
+  /** Server-seeded map of org → theme block. Omits orgs without a theme. */
+  orgThemes?: Record<string, OrgTheme>;
   children: React.ReactNode;
 }
 
-export function DashboardShell({ orgs, children }: DashboardShellProps) {
+export function DashboardShell({ orgs, orgThemes = {}, children }: DashboardShellProps) {
   const [currentOrg, setCurrentOrg] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       // URL is authoritative: if ?org= is present, use it so server and client agree.
@@ -36,6 +40,7 @@ export function DashboardShell({ orgs, children }: DashboardShellProps) {
 
   return (
     <OrgContext.Provider value={{ currentOrg, setCurrentOrg, orgs }}>
+      <OrgThemeProvider currentOrg={currentOrg} orgThemes={orgThemes}>
       <div className="flex h-screen">
         {/* Desktop sidebar */}
         <div className="hidden md:block">
@@ -64,6 +69,7 @@ export function DashboardShell({ orgs, children }: DashboardShellProps) {
           <BottomNav />
         </div>
       </div>
+      </OrgThemeProvider>
     </OrgContext.Provider>
   );
 }
