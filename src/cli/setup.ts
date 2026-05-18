@@ -15,6 +15,9 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { spawnSync } from 'child_process';
 import { TelegramAPI, formatValidateError } from '../telegram/api.js';
+import { getBrandName } from '../branding/index.js';
+import { writeInstanceConfig } from '../branding/instance-config.js';
+import { validateInstanceId } from '../utils/validate.js';
 
 function rl(): Interface {
   return createInterface({ input: process.stdin, output: process.stdout });
@@ -209,15 +212,56 @@ function findProjectRoot(): string {
 export const setupCommand = new Command('setup')
   .option('--instance <id>', 'Instance ID', 'default')
   .option('--connector <kind>', 'Communication connector kind (telegram | none) — skips interactive prompt when set. PR2 of pluggable-connectors stack.', '')
+  .option('--white-label <name>', 'Set the instance brand name (writes ~/.cortextos/{instance}/config/branding.json). Default: cortextOS.', '')
   .description('Interactive first-run setup wizard — install, create org, configure agents, start daemon')
-  .action(async (options: { instance: string; connector: string }) => {
+  .action(async (options: { instance: string; connector: string; whiteLabel: string }) => {
     const instanceId = options.instance;
+    // Validate --instance BEFORE any path construction. Without this, a
+    // value like `../other-dir` would escape the intended `~/.cortextos/`
+    // directory when joined into branding.json / state paths (Codex
+    // review of PR #29 flagged this).
+    try {
+      validateInstanceId(instanceId);
+    } catch (err) {
+      console.error(`  Error: ${(err as Error).message}`);
+      process.exit(1);
+    }
     const projectRoot = findProjectRoot();
     const ctxRoot = join(homedir(), '.cortextos', instanceId);
 
+    // Apply white-label brand name BEFORE any branded output so the welcome
+    // banner uses the operator's name. Writes ~/.cortextos/{instance}/config/branding.json
+    // which the daemon + dashboard both read via #15's `getBrandName()`.
+    if (options.whiteLabel) {
+      const name = options.whiteLabel.trim();
+      if (name.length === 0) {
+        console.error('  Error: --white-label requires a non-empty name');
+        process.exit(1);
+      }
+      // CTX_INSTANCE_ID must be set so writeInstanceConfig writes to the
+      // right instance dir; spawn-time env doesn't carry it from CLI args.
+      const prevInstanceEnv = process.env.CTX_INSTANCE_ID;
+      process.env.CTX_INSTANCE_ID = instanceId;
+      try {
+        writeInstanceConfig({ brandName: name });
+        console.log(`  White-label brand name set: ${name}`);
+      } finally {
+        if (prevInstanceEnv === undefined) delete process.env.CTX_INSTANCE_ID;
+        else process.env.CTX_INSTANCE_ID = prevInstanceEnv;
+      }
+    }
+    const brand = (() => {
+      const prev = process.env.CTX_INSTANCE_ID;
+      process.env.CTX_INSTANCE_ID = instanceId;
+      try { return getBrandName(); } finally {
+        if (prev === undefined) delete process.env.CTX_INSTANCE_ID;
+        else process.env.CTX_INSTANCE_ID = prev;
+      }
+    })();
+
     const iface = rl();
 
-    console.log('\n  Welcome to cortextOS setup\n');
+    console.log(`\n  Welcome to ${brand} setup\n`);
     console.log('  This wizard will:');
     console.log('    1. Check and install dependencies');
     console.log('    2. Create your organization');
