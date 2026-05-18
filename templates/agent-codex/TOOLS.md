@@ -16,13 +16,13 @@ Reply using: cortextos bus send-telegram <chat_id> '<your reply>'
 
 ```bash
 # Reply to user
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'message text'
+cortextos bus send $CTX_AGENT_NAME 'message text'
 
 # Reply with a photo
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'caption' --image /path/to/file.png
+cortextos bus send $CTX_AGENT_NAME 'caption' --image /path/to/file.png
 
 # Reply with any file
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'caption' --file /path/to/file.pdf
+cortextos bus send $CTX_AGENT_NAME 'caption' --file /path/to/file.pdf
 ```
 
 ---

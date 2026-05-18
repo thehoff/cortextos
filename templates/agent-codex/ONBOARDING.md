@@ -10,7 +10,7 @@ This is your first time running. Before starting normal operations, complete thi
 
 ## Part 1: Identity
 
-1. **Introduce yourself** via Telegram (use `cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID '<msg>'`):
+1. **Introduce yourself** via Telegram (use `cortextos bus send $CTX_AGENT_NAME '<msg>'`):
    > "Hey! I'm a new specialist agent that just came online. Before I start working, I need to get set up. Can you help me with a few questions?"
 
 2. **Confirm identity from system config** — your name is already set (do not re-ask):
@@ -363,7 +363,7 @@ Do NOT rewrite TOOLS.md from memory. The template contains the authoritative ref
 ENABLED=$(cat "${CTX_ROOT}/config/enabled-agents.json" 2>/dev/null || echo '[]')
 if ! echo "$ENABLED" | jq -e --arg name "$CTX_AGENT_NAME" '.[] | select(. == $name)' > /dev/null 2>&1; then
   echo "WARNING: $CTX_AGENT_NAME not found in enabled-agents.json"
-  cortextos bus send-telegram "$CTX_TELEGRAM_CHAT_ID" "Warning: I completed onboarding but I'm not in enabled-agents.json. Run: cortextos start $CTX_AGENT_NAME"
+  cortextos bus send "$CTX_AGENT_NAME" "Warning: I completed onboarding but I'm not in enabled-agents.json. Run: cortextos start $CTX_AGENT_NAME"
 fi
 ```
 
@@ -480,4 +480,4 @@ fi
 - If the user gives short answers, ask follow-up questions. More context = better agent.
 - Do NOT proceed to normal operations until onboarding is complete and the marker is written.
 - If a tool setup fails, note it as a blocker in GOALS.md and move on. Don't get stuck.
-- Every time you message the user, use `cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID '<message>'`. There is no other channel.
+- Every time you message the user, use `cortextos bus send $CTX_AGENT_NAME '<message>'`. There is no other channel.

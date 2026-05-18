@@ -39,7 +39,7 @@ Complete the following in order. Do not skip steps.
 
 1. **Send boot message first** — before reading anything else. SKIP this step if your startup prompt says `CONTEXT HANDOFF` (that is a handoff restart, not a cold boot):
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'Booting up... one moment'
+   cortextos bus send $CTX_AGENT_NAME 'Booting up... one moment'
    ```
 2. Read all bootstrap files: IDENTITY.md, SOUL.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md, MEMORY.md, USER.md, TOOLS.md, SYSTEM.md
    - TOOLS.md is a compact command index — load the relevant skill (e.g. `plugins/cortextos-agent-skills/skills/tasks/SKILL.md`, `plugins/cortextos-agent-skills/skills/comms/SKILL.md`) when you need full docs for a workflow
@@ -58,7 +58,7 @@ Complete the following in order. Do not skip steps.
 11. Update heartbeat: `cortextos bus update-heartbeat "online"`
 12. Log session start: `cortextos bus log-event action session_start info --meta '{"agent":"'$CTX_AGENT_NAME'"}'`
 13. Write session start entry to daily memory (see Memory Protocol below)
-14. Send your online status message via `cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID '<message>'`. On a cold boot: tell them what crons are scheduled (from `cortextos bus list-crons $CTX_AGENT_NAME`), pending messages, and what you are picking up from last session. On a `CONTEXT HANDOFF` restart: send ONE brief conversational message that picks up naturally (e.g. "back — [what you were working on]"). No cron IDs, no status report.
+14. Send your online status message via `cortextos bus send $CTX_AGENT_NAME '<message>'`. On a cold boot: tell them what crons are scheduled (from `cortextos bus list-crons $CTX_AGENT_NAME`), pending messages, and what you are picking up from last session. On a `CONTEXT HANDOFF` restart: send ONE brief conversational message that picks up naturally (e.g. "back — [what you were working on]"). No cron IDs, no status report.
 
 ---
 
@@ -84,11 +84,11 @@ Run these steps before any restart (hard or soft) and on context exhaustion.
 3. Log session end: `cortextos bus log-event action session_end info --meta '{"agent":"'$CTX_AGENT_NAME'","reason":"[why]"}'`
 4. **Hard restart only** — notify user on Telegram:
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'Restarting now — will be back in a moment.'
+   cortextos bus send $CTX_AGENT_NAME 'Restarting now — will be back in a moment.'
    ```
 5. **Context exhaustion only** — notify first, then hard-restart:
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'Context window full. Hard-restarting with fresh session. Resuming from memory.'
+   cortextos bus send $CTX_AGENT_NAME 'Context window full. Hard-restarting with fresh session. Resuming from memory.'
    cortextos bus hard-restart --reason "context exhaustion"
    ```
 
@@ -227,7 +227,7 @@ Before ANY external action (email, deploy, post, delete data, financial, merge t
 
 ```bash
 APPR_ID=$(cortextos bus create-approval "<what you want to do>" "<category>" "<context and draft>")
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID 'Approval needed: <title> — check dashboard'
+cortextos bus send $CTX_AGENT_NAME 'Approval needed: <title> — check dashboard'
 cortextos bus update-task <task_id> blocked
 cortextos bus log-event task task_blocked info --meta '{"task_id":"<task_id>","blocked_by":"'$APPR_ID'","reason":"awaiting approval"}'
 ```

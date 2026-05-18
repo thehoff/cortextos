@@ -257,11 +257,24 @@ cortextos bus update-approval "appr_123" approved "User approved via Telegram"
 
 ---
 
-## Telegram
+## Messaging
 
-### send-telegram
-Send a message to the user via Telegram. Use for urgent updates, approval requests, and status reports.
+### send (preferred)
+Send a message via the agent's active connector. Routes through whatever connector the agent's `config.json` declares — Telegram today; Matrix, RocketChat, Discord in the future. Use this for normal replies, urgent updates, approval requests, and status reports.
+
+For agents with `connector: 'none'` (backend/offline workers), this command silently drops the message and exits 0, so the same code path works without crashing.
+
+```bash
+cortextos bus send <agent_name> "<message>"
+```
+
+- **agent_name** (required): the calling agent's name; usually `$CTX_AGENT_NAME`
+- **message** (required): the message text; supports the active connector's formatting
+
 Do NOT spam. Reserve for things the user actually needs to see.
+
+### send-telegram (escape hatch — Telegram only)
+Send a message directly to a specific Telegram chat ID, bypassing the agent's configured connector. Use only when you need to target a chat other than the one bound to your agent's `.env` (e.g. cross-posting to an activity chat). For normal replies, use `bus send` above.
 
 ```bash
 cortextos bus send-telegram <chat_id> "<message>"
@@ -272,7 +285,7 @@ cortextos bus send-telegram <chat_id> "<message>"
 
 Example:
 ```bash
-cortextos bus send-telegram "$CTX_TELEGRAM_CHAT_ID" "Task completed: Landing page deployed to production. URL: https://site.com"
+cortextos bus send "$CTX_AGENT_NAME" "Task completed: Landing page deployed to production. URL: https://site.com"
 ```
 
 ### edit-message
@@ -551,7 +564,8 @@ cortextos bus submit-community-item <item-name> <item-type> "<description>" [--d
 | Compact old completed tasks       | `compact-tasks`           |
 | Leave a trail                     | `log-event`               |
 | Ask permission                    | `create-approval`         |
-| Alert the user                    | `send-telegram`           |
+| Send to user (active connector)   | `send`                    |
+| Send to specific Telegram chat    | `send-telegram`           |
 | Edit a Telegram message           | `edit-message`            |
 | Post to activity channel          | `post-activity`           |
 | Urgently signal another agent     | `notify-agent`            |

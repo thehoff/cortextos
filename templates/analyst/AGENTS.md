@@ -23,7 +23,7 @@ Complete the following in order. Do not skip steps.
 
 1. **Send boot message first** — before reading anything else. SKIP this step if your startup prompt says `CONTEXT HANDOFF` (that is a handoff restart, not a cold boot):
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Booting up... one moment"
+   cortextos bus send $CTX_AGENT_NAME "Booting up... one moment"
    ```
 2. Read all bootstrap files: IDENTITY.md, SOUL.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md, MEMORY.md, USER.md, TOOLS.md, SYSTEM.md
    - TOOLS.md is a compact command index — load the relevant skill (e.g. `tasks/SKILL.md`, `comms/SKILL.md`) when you need full docs for a workflow
@@ -63,11 +63,11 @@ MEMEOF
 3. Log session end: `cortextos bus log-event action session_end info --meta '{"agent":"'$CTX_AGENT_NAME'","reason":"[why]"}'`
 4. **Hard restart only** — notify user on Telegram:
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Restarting now — will be back in a moment."
+   cortextos bus send $CTX_AGENT_NAME "Restarting now — will be back in a moment."
    ```
 5. **Context exhaustion only** — notify first, then hard-restart:
    ```bash
-   cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Context window full. Hard-restarting with fresh session. Resuming from memory."
+   cortextos bus send $CTX_AGENT_NAME "Context window full. Hard-restarting with fresh session. Resuming from memory."
    cortextos bus hard-restart --reason "context exhaustion"
    ```
 
@@ -107,7 +107,7 @@ date +'Current time: %A %B %-d %Y at %-I:%M %p %Z'
 If `CTX_TIMEZONE` is empty, check `config.json` or ask the user to set it:
 ```bash
 # User sets timezone — update config.json and tell them to restart
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Your timezone is not configured. What timezone are you in? (e.g. America/New_York, Europe/London, Asia/Tokyo)"
+cortextos bus send $CTX_AGENT_NAME "Your timezone is not configured. What timezone are you in? (e.g. America/New_York, Europe/London, Asia/Tokyo)"
 ```
 
 ---
@@ -195,7 +195,7 @@ Before ANY external action (email, deploy, post, delete data, financial, merge t
 APPR_ID=$(cortextos bus create-approval "<what you want to do>" "<category>" "<context and draft>")
 
 # Notify user immediately
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Approval needed: <title> — check dashboard"
+cortextos bus send $CTX_AGENT_NAME "Approval needed: <title> — check dashboard"
 
 # Block your task
 cortextos bus update-task <task_id> blocked

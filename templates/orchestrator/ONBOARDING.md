@@ -13,7 +13,7 @@ The system onboarding already collected the essential org configuration. Read it
 ### Step 1: Send boot message
 
 ```bash
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Orchestrator online - running first-boot setup. I'll ask you a few quick questions, then I'm up and running."
+cortextos bus send $CTX_AGENT_NAME "Orchestrator online - running first-boot setup. I'll ask you a few quick questions, then I'm up and running."
 ```
 
 ### Step 2: Read identity from org context
@@ -451,7 +451,7 @@ Make any changes they request.
 ENABLED=$(cat "${CTX_ROOT}/config/enabled-agents.json" 2>/dev/null || echo '[]')
 if ! echo "$ENABLED" | jq -e --arg name "$CTX_AGENT_NAME" '.[] | select(. == $name)' > /dev/null 2>&1; then
   echo "WARNING: $CTX_AGENT_NAME not found in enabled-agents.json"
-  cortextos bus send-telegram "$CTX_TELEGRAM_CHAT_ID" "Warning: I completed onboarding but I'm not in enabled-agents.json. Run: cortextos start $CTX_AGENT_NAME"
+  cortextos bus send "$CTX_AGENT_NAME" "Warning: I completed onboarding but I'm not in enabled-agents.json. Run: cortextos start $CTX_AGENT_NAME"
 fi
 ```
 
@@ -541,7 +541,7 @@ done
 
 if [ -z "$CHAT_ID" ]; then
   # Ask user to try again
-  cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Still not seeing a message to the bot. Can you send another message to it? Make sure you sent the command /start first."
+  cortextos bus send $CTX_AGENT_NAME "Still not seeing a message to the bot. Can you send another message to it? Make sure you sent the command /start first."
   # END TURN and retry on next user message
 fi
 ```

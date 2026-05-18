@@ -48,7 +48,7 @@ cortextos bus update-task "$TASK_ID" blocked "Awaiting approval: $APPR_ID" "$APP
 ### 3. Notify the user
 
 ```bash
-cortextos bus send-telegram "$CTX_TELEGRAM_CHAT_ID" \
+cortextos bus send "$CTX_AGENT_NAME" \
   "Approval needed: <title> — check dashboard or reply to approve/reject"
 ```
 
@@ -84,7 +84,7 @@ cortextos bus complete-task "$TASK_ID" --result "Cancelled — approval rejected
 If an approval is still pending after 4 hours during day mode, send one re-ping:
 
 ```bash
-cortextos bus send-telegram "$CTX_TELEGRAM_CHAT_ID" \
+cortextos bus send "$CTX_AGENT_NAME" \
   "Reminder: approval for '<title>' is still pending. No rush, just flagging."
 ```
 
