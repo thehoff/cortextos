@@ -115,7 +115,7 @@ export const addAgentCommand = new Command('add-agent')
       console.log(`  Copied template files from ${effectiveTemplate}`);
     } else {
       // Create minimal files
-      createMinimalAgent(agentDir, name, org, options.template);
+      createMinimalAgent(agentDir, name, org, options.template, options.connector as 'telegram' | 'none');
       console.log('  Created minimal agent files');
     }
 
@@ -233,6 +233,23 @@ export const addAgentCommand = new Command('add-agent')
           const timezone = ctx.timezone || 'UTC';
           const orchestrator = ctx.orchestrator || '(not set)';
           const dashboardUrl = ctx.dashboard_url || '(not configured)';
+          // Generated Communication block is gated on the new agent's
+          // connector kind. `--connector none` agents must not be taught
+          // `send-telegram`; they get the connector-agnostic `bus send`
+          // (which silent-drops on NullConnector — see src/cli/bus.ts:1081-1083).
+          const commLines = options.connector === 'telegram'
+            ? [
+                '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
+                '- Send to user via active connector: `cortextos bus send $CTX_AGENT_NAME "<text>"`',
+                '- Direct Telegram escape hatch: `cortextos bus send-telegram <chat_id> "<text>"`',
+                '- Check inbox: `cortextos bus check-inbox`',
+              ]
+            : [
+                '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
+                '- Send via active connector: `cortextos bus send $CTX_AGENT_NAME "<text>"` (no-op for `connector: \'none\'`)',
+                '- Check inbox: `cortextos bus check-inbox`',
+              ];
+
           const systemMd = [
             '# System Context',
             '',
@@ -262,9 +279,7 @@ export const addAgentCommand = new Command('add-agent')
             '',
             '## Communication',
             '',
-            '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
-            '- Telegram to user: `cortextos bus send-telegram <chat_id> "<text>"`',
-            '- Check inbox: `cortextos bus check-inbox`',
+            ...commLines,
             '',
           ].join('\n');
           writeFileSync(join(agentDir, 'SYSTEM.md'), systemMd, 'utf-8');
@@ -335,9 +350,14 @@ export const addAgentCommand = new Command('add-agent')
 
     console.log(`\n  Agent "${name}" created.`);
     console.log(`\n  Next steps:`);
-    console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram settings`);
-    console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
-    console.log(`    3. Start: cortextos start ${name}\n`);
+    if (options.connector === 'telegram') {
+      console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram BOT_TOKEN + CHAT_ID`);
+      console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
+      console.log(`    3. Start: cortextos start ${name}\n`);
+    } else {
+      console.log(`    1. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
+      console.log(`    2. Start: cortextos start ${name}\n`);
+    }
   });
 
 /**
@@ -426,7 +446,7 @@ function copyTemplateFiles(templateDir: string, agentDir: string, name: string, 
   }
 }
 
-function createMinimalAgent(agentDir: string, name: string, org: string, template: string): void {
+function createMinimalAgent(agentDir: string, name: string, org: string, template: string, connector: 'telegram' | 'none'): void {
   const role = template === 'orchestrator' ? 'Orchestrator'
     : template === 'analyst' ? 'Analyst'
     : 'Agent';
@@ -441,10 +461,15 @@ function createMinimalAgent(agentDir: string, name: string, org: string, templat
   writeFileSync(join(agentDir, 'TOOLS.md'), `# Available Tools\n\nUse \`cortextos bus <command>\` for bus operations.\n`);
   // CLAUDE.md is a thin wrapper that imports AGENTS.md (works with Claude Code's @ import syntax)
   writeFileSync(join(agentDir, 'CLAUDE.md'), '@AGENTS.md\n');
-  writeFileSync(join(agentDir, 'AGENTS.md'), createAgentsMd(name, org, template));
+  writeFileSync(join(agentDir, 'AGENTS.md'), createAgentsMd(name, org, template, connector));
 }
 
-function createAgentsMd(name: string, org: string, template: string): string {
+function createAgentsMd(name: string, org: string, template: string, connector: 'telegram' | 'none'): string {
+  // sendLine is interpolated into the outer template literal below; backticks
+  // inside it stay literal because ${} substitution doesn't re-parse the value.
+  const sendLine = connector === 'telegram'
+    ? 'Send to user (active connector): `cortextos bus send $CTX_AGENT_NAME "<text>"`\nDirect Telegram escape hatch: `cortextos bus send-telegram <chat_id> "<text>"`'
+    : "Send to user (active connector): `cortextos bus send $CTX_AGENT_NAME \"<text>\"` (no-op for `connector: 'none'`)";
   return `# cortextOS ${template.charAt(0).toUpperCase() + template.slice(1)}
 
 ## BOOTSTRAP PROTOCOL - READ EVERY FILE BEFORE DOING ANYTHING
@@ -471,6 +496,6 @@ Update tasks: \`cortextos bus update-task <id> <status>\`
 Complete tasks: \`cortextos bus complete-task <id> --result "<text>"\`
 Log events: \`cortextos bus log-event <category> <event> <severity>\`
 Update heartbeat: \`cortextos bus update-heartbeat "<status>"\`
-Send Telegram: \`cortextos bus send-telegram <chat_id> "<text>"\`
+${sendLine}
 `;
 }

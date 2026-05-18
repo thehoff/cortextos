@@ -8,8 +8,14 @@ import type { OrgContext } from '../types/index.js';
 export const initCommand = new Command('init')
   .argument('<org-name>', 'Organization name')
   .option('--instance <id>', 'Instance ID', 'default')
+  .option('--connector <kind>', 'Default communication connector for the org (telegram | none). Tailors secrets.env + next-steps messaging at init time. Default: telegram.', 'telegram')
   .description('Create a new cortextOS organization')
-  .action(async (orgName: string, options: { instance: string }) => {
+  .action(async (orgName: string, options: { instance: string; connector: string }) => {
+    if (options.connector !== 'telegram' && options.connector !== 'none') {
+      console.error(`Error: --connector must be 'telegram' or 'none' (got "${options.connector}")`);
+      process.exit(1);
+    }
+    const connectorKind = options.connector as 'telegram' | 'none';
     const instanceId = options.instance;
     const ctxRoot = join(homedir(), '.cortextos', instanceId);
     const projectRoot = process.cwd();
@@ -96,16 +102,31 @@ export const initCommand = new Command('init')
       }, null, 2) + '\n', 'utf-8');
     }
 
-    // Create secrets.env placeholder
+    // Create secrets.env placeholder.
+    // Telegram-only env keys are gated on --connector. For `--connector none`
+    // we omit BOT_TOKEN/CHAT_ID/ACTIVITY_CHAT_ID so the file doesn't read as
+    // "Telegram is mandatory" — operators can still add them later if they
+    // create a Telegram agent.
     const secretsPath = join(orgDir, 'secrets.env');
     if (!existsSync(secretsPath)) {
+      const telegramBlock = connectorKind === 'telegram'
+        ? [
+            '# === Telegram connector credentials ===',
+            '# Required for agents created with --connector telegram (the default).',
+            '# Skip if all your agents use --connector none.',
+            'BOT_TOKEN=',
+            'CHAT_ID=',
+            '',
+            '# Optional: org-level activity channel (Telegram-only).',
+            '# Leave blank unless you set up an activity-channel Telegram group.',
+            'ACTIVITY_CHAT_ID=',
+            '',
+          ]
+        : [];
       writeFileSync(secretsPath, [
         '# cortextOS secrets for ' + orgName,
-        '# Add your Telegram bot token and other secrets here',
-        'BOT_TOKEN=',
-        'CHAT_ID=',
-        'ACTIVITY_CHAT_ID=',
         '',
+        ...telegramBlock,
         '# Knowledge Base (RAG) — enables semantic search across agent memory and documents',
         '# Get your API key from https://aistudio.google.com/app/apikey (free tier available)',
         'GEMINI_API_KEY=',
@@ -147,6 +168,30 @@ export const initCommand = new Command('init')
           if (!existsSync(systemMdPath)) continue; // only update existing agents
 
           try {
+            // Read this agent's connector kind from its config.json so the
+            // generated Communication block doesn't teach `send-telegram` to
+            // agents with `connector: 'none'`. Defaults to 'telegram' for
+            // legacy agents without the field (matches daemon legacy inference).
+            let agentConnector: 'telegram' | 'none' = 'telegram';
+            try {
+              const agentCfg = JSON.parse(readFileSync(join(agentDir, 'config.json'), 'utf-8'));
+              if (agentCfg.connector === 'none') agentConnector = 'none';
+              else if (agentCfg.connector === 'telegram') agentConnector = 'telegram';
+            } catch { /* default to telegram for unreadable config */ }
+
+            const commLines = agentConnector === 'telegram'
+              ? [
+                  '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
+                  '- Send to user via active connector: `cortextos bus send $CTX_AGENT_NAME "<text>"`',
+                  '- Direct Telegram escape hatch: `cortextos bus send-telegram <chat_id> "<text>"`',
+                  '- Check inbox: `cortextos bus check-inbox`',
+                ]
+              : [
+                  '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
+                  '- Send via active connector: `cortextos bus send $CTX_AGENT_NAME "<text>"` (no-op for `connector: \'none\'`)',
+                  '- Check inbox: `cortextos bus check-inbox`',
+                ];
+
             const systemMd = [
               '# System Context',
               '',
@@ -176,9 +221,7 @@ export const initCommand = new Command('init')
               '',
               '## Communication',
               '',
-              '- Agent-to-agent: `cortextos bus send-message <agent> <priority> "<text>"`',
-              '- Telegram to user: `cortextos bus send-telegram <chat_id> "<text>"`',
-              '- Check inbox: `cortextos bus check-inbox`',
+              ...commLines,
               '',
             ].join('\n');
             writeFileSync(systemMdPath, systemMd, 'utf-8');
@@ -193,9 +236,14 @@ export const initCommand = new Command('init')
 
     console.log(`\n  Organization "${orgName}" initialized.`);
     console.log(`\n  Next steps:`);
-    console.log(`    1. Add your Telegram bot token to orgs/${orgName}/secrets.env`);
-    console.log(`    2. Add an agent: cortextos add-agent <name> --template orchestrator`);
-    console.log(`    3. Start: cortextos start\n`);
+    if (connectorKind === 'telegram') {
+      console.log(`    1. Add your Telegram bot token to orgs/${orgName}/secrets.env`);
+      console.log(`    2. Add an agent: cortextos add-agent <name> --template orchestrator`);
+      console.log(`    3. Start: cortextos start\n`);
+    } else {
+      console.log(`    1. Add an agent: cortextos add-agent <name> --template orchestrator --connector none`);
+      console.log(`    2. Start: cortextos start\n`);
+    }
   });
 
 function findOrgTemplateDir(projectRoot: string): string | null {

@@ -503,5 +503,9 @@ export const setupCommand = new Command('setup')
     console.log('    - Check agent status: cortextos status');
     console.log('    - Start dashboard:    cortextos dashboard');
     console.log('    - View PM2 logs:      pm2 logs');
-    console.log('    - Talk to your agent via Telegram!\n');
+    if (chosenConnector === 'telegram') {
+      console.log('    - Talk to your agent via Telegram!\n');
+    } else {
+      console.log('    - Interact with your agent via the dashboard, or `cortextos bus send <agent> "<msg>"`\n');
+    }
   });
