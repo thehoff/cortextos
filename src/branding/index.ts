@@ -6,13 +6,10 @@
  * MUST stay in sync (see the header comment over there).
  *
  * Precedence (highest → lowest):
- *   1. Per-org override   (`BrandOrgContext.theme.*` — wired by #9)
- *   2. Env-var override   (`CORTEXTOS_BRAND_*` — wired by #10)
- *   3. Built-in defaults  (this file)
- *
- * #9 and #10 don't ship in this PR — they feed the same helpers. This module
- * delivers the API + defaults + env-var fallback so other PRs can plug in
- * without inventing competing entry points.
+ *   1. Per-org override          (`BrandOrgContext.theme.*` — wired by #9)
+ *   2. Instance white-label      (`BrandInstanceConfig` from `~/.cortextos/{instance}/config/branding.json` — #10)
+ *   3. Env-var override          (`CORTEXTOS_BRAND_*` — also #10)
+ *   4. Built-in defaults         (this file)
  *
  * Default palette mirrors `dashboard/src/app/globals.css:170-250` exactly so
  * the helper and the unhooked dashboard return identical colors today.
@@ -50,8 +47,24 @@ export interface BrandOrgContext {
   };
 }
 
+/**
+ * Instance-level white-label config. Loaded from
+ * `~/.cortextos/{instance}/config/branding.json` by `readInstanceConfig`
+ * (CLI) or `dashboard/src/lib/data/branding-config.ts:readBrandingConfig`
+ * (dashboard). Higher precedence than env-vars; lower than per-org.
+ */
+export interface BrandInstanceConfig {
+  brandName?: string;
+  primaryColorLight?: string;
+  primaryColorDark?: string;
+  accentColorLight?: string;
+  accentColorDark?: string;
+  logoPath?: string;
+}
+
 export interface BrandResolutionInput {
   orgContext?: BrandOrgContext;
+  instanceConfig?: BrandInstanceConfig;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -62,6 +75,8 @@ function envOf(input?: BrandResolutionInput): NodeJS.ProcessEnv {
 export function getBrandName(input?: BrandResolutionInput): string {
   const orgName = input?.orgContext?.theme?.brandName?.trim();
   if (orgName) return orgName;
+  const instanceName = input?.instanceConfig?.brandName?.trim();
+  if (instanceName) return instanceName;
   const envName = envOf(input).CORTEXTOS_BRAND_NAME?.trim();
   if (envName) return envName;
   return DEFAULT_BRAND_NAME;
@@ -69,32 +84,42 @@ export function getBrandName(input?: BrandResolutionInput): string {
 
 export function getBrandColors(input?: BrandResolutionInput): BrandColors {
   const orgTheme = input?.orgContext?.theme;
+  const inst = input?.instanceConfig;
   const env = envOf(input);
   return {
-    primaryLight: pickColor(orgTheme?.primaryColorLight, env.CORTEXTOS_BRAND_PRIMARY_LIGHT, DEFAULT_BRAND_COLORS.primaryLight),
-    primaryDark: pickColor(orgTheme?.primaryColorDark, env.CORTEXTOS_BRAND_PRIMARY_DARK, DEFAULT_BRAND_COLORS.primaryDark),
-    accentLight: pickColor(orgTheme?.accentColorLight, env.CORTEXTOS_BRAND_ACCENT_LIGHT, DEFAULT_BRAND_COLORS.accentLight),
-    accentDark: pickColor(orgTheme?.accentColorDark, env.CORTEXTOS_BRAND_ACCENT_DARK, DEFAULT_BRAND_COLORS.accentDark),
+    primaryLight: pickColor(orgTheme?.primaryColorLight, inst?.primaryColorLight, env.CORTEXTOS_BRAND_PRIMARY_LIGHT, DEFAULT_BRAND_COLORS.primaryLight),
+    primaryDark: pickColor(orgTheme?.primaryColorDark, inst?.primaryColorDark, env.CORTEXTOS_BRAND_PRIMARY_DARK, DEFAULT_BRAND_COLORS.primaryDark),
+    accentLight: pickColor(orgTheme?.accentColorLight, inst?.accentColorLight, env.CORTEXTOS_BRAND_ACCENT_LIGHT, DEFAULT_BRAND_COLORS.accentLight),
+    accentDark: pickColor(orgTheme?.accentColorDark, inst?.accentColorDark, env.CORTEXTOS_BRAND_ACCENT_DARK, DEFAULT_BRAND_COLORS.accentDark),
   };
 }
 
 export function getBrandLogoPath(input?: BrandResolutionInput): string | null {
   const orgLogo = input?.orgContext?.theme?.logoPath?.trim();
   if (orgLogo) return orgLogo;
+  const instanceLogo = input?.instanceConfig?.logoPath?.trim();
+  if (instanceLogo) return instanceLogo;
   const envLogo = envOf(input).CORTEXTOS_BRAND_LOGO_PATH?.trim();
   if (envLogo) return envLogo;
   return null;
 }
 
 /**
- * Pick the first valid color from (org → env → default). Invalid org/env
- * values fall through silently — strict validation lives in the loaders
- * (#9 validates `orgs/{org}/context.json`, #10 validates `branding.json`),
+ * Pick the first valid color from (org → instance → env → default).
+ * Invalid values fall through silently; strict validation lives in the
+ * loaders (#9 validates context.json, #10 validates branding.json),
  * not here.
  */
-function pickColor(orgValue: string | undefined, envValue: string | undefined, fallback: string): string {
+function pickColor(
+  orgValue: string | undefined,
+  instanceValue: string | undefined,
+  envValue: string | undefined,
+  fallback: string,
+): string {
   const org = orgValue?.trim();
   if (org && isValidBrandColor(org)) return org;
+  const inst = instanceValue?.trim();
+  if (inst && isValidBrandColor(inst)) return inst;
   const env = envValue?.trim();
   if (env && isValidBrandColor(env)) return env;
   return fallback;
