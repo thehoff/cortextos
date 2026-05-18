@@ -34,7 +34,7 @@ export function Topbar({ orgs, currentOrg, onOrgChange, onMenuClick }: TopbarPro
     .slice(0, 2);
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b bg-card/50 px-4">
+    <header className="flex h-[var(--height-topbar)] shrink-0 items-center justify-between border-b bg-card/50 px-4">
       {/* Left: Menu button (mobile) + Org Selector */}
       <div className="flex items-center gap-2">
         {onMenuClick && (
