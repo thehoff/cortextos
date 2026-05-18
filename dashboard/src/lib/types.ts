@@ -25,6 +25,17 @@ export interface Agent {
 
 export type AgentRuntime = 'claude-code' | 'codex-app-server' | 'hermes';
 
+/**
+ * Communication connector kind for an agent. Mirrors the runtime allowlist
+ * exported from `src/connectors/index.ts:CONNECTOR_ALLOWLIST`.
+ *
+ * The string-union escape (`(string & {})`) keeps the type structurally open
+ * so new connector kinds shipping upstream (Matrix / RocketChat / Discord /
+ * Mattermost — spec §13) render as a labelled badge in the dashboard without
+ * blocking the build on every type bump.
+ */
+export type ConnectorKind = 'telegram' | 'none' | (string & {});
+
 export interface AgentSummary {
   name: string;
   org: string;
@@ -32,6 +43,7 @@ export interface AgentSummary {
   currentTask?: string;
   lastHeartbeat?: string;
   runtime?: AgentRuntime;
+  connector?: ConnectorKind;
 }
 
 export interface Heartbeat {
@@ -302,6 +314,7 @@ export interface AgentDetail {
   logFiles: LogFile[];
   agentDir: string;
   runtime?: AgentRuntime;
+  connector?: ConnectorKind;
 }
 
 export interface MemoryFile {

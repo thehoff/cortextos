@@ -20,6 +20,7 @@ import type {
   AgentIdentity,
   AgentPaths,
   AgentRuntime,
+  ConnectorKind,
   HealthStatus,
   Heartbeat,
   MemoryFile,
@@ -43,6 +44,29 @@ async function getAgentRuntime(name: string, org?: string): Promise<AgentRuntime
     // missing/malformed config — fall through to default
   }
   return 'claude-code';
+}
+
+/**
+ * Read agent config.json and extract `connector` (e.g. 'telegram' | 'none').
+ * Returns undefined when the field is absent so the dashboard can hide the
+ * badge for legacy agents that pre-date the field. The daemon's
+ * `resolveLegacyTelegramEnablement` (src/daemon/agent-manager.ts:43) does
+ * the runtime inference at boot — the dashboard doesn't reimplement it here
+ * because the only consumer is a UI badge that's allowed to be silent for
+ * legacy agents.
+ */
+async function getAgentConnector(name: string, org?: string): Promise<ConnectorKind | undefined> {
+  const agentDir = getAgentDir(name, org);
+  try {
+    const raw = await fs.readFile(path.join(agentDir, 'config.json'), 'utf-8');
+    const cfg = JSON.parse(raw) as { connector?: string };
+    if (typeof cfg.connector === 'string' && cfg.connector.length > 0) {
+      return cfg.connector as ConnectorKind;
+    }
+  } catch {
+    // missing/malformed config — leave undefined
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,10 +154,11 @@ export async function discoverAgents(org?: string): Promise<AgentSummary[]> {
 
   const summaries = await Promise.all(
     agents.map(async (agent) => {
-      const [identity, hb, runtime] = await Promise.all([
+      const [identity, hb, runtime, connector] = await Promise.all([
         getAgentIdentity(agent.name, agent.org),
         getHeartbeat(agent.name),
         getAgentRuntime(agent.name, agent.org),
+        getAgentConnector(agent.name, agent.org),
       ]);
 
       let health: HealthStatus = 'down';
@@ -176,6 +201,7 @@ export async function discoverAgents(org?: string): Promise<AgentSummary[]> {
         role: identity.role,
         tasksToday,
         runtime,
+        connector,
       };
 
       return summary;
@@ -198,7 +224,7 @@ export async function getAgentDetail(
 ): Promise<AgentDetail> {
   const paths = getAgentPaths(name, org);
 
-  const [identity, soulRaw, goalsRaw, memoryRaw, hb, memoryFiles, logFiles, runtime] =
+  const [identity, soulRaw, goalsRaw, memoryRaw, hb, memoryFiles, logFiles, runtime, connector] =
     await Promise.all([
       getAgentIdentity(name, org),
       readFileOrEmpty(paths.soulMd),
@@ -208,6 +234,7 @@ export async function getAgentDetail(
       getAgentMemoryFiles(name, org),
       getAgentLogFiles(name, org),
       getAgentRuntime(name, org),
+      getAgentConnector(name, org),
     ]);
 
   let health: HealthStatus = 'down';
@@ -228,6 +255,7 @@ export async function getAgentDetail(
     logFiles,
     agentDir: paths.agentDir,
     runtime,
+    connector,
   };
 }
 
