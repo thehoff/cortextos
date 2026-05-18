@@ -13,6 +13,12 @@ export const dynamic = 'force-dynamic';
 
 const VALID_NAME = /^[a-z0-9_-]+$/;
 const VALID_TEMPLATES = ['agent', 'agent-codex', 'orchestrator', 'analyst'];
+// Mirrors `src/connectors/index.ts:CONNECTOR_ALLOWLIST`. Hardcoded here
+// while issue #18 (the `/api/connectors/kinds` registry endpoint) is in
+// flight — once that lands the dashboard fetches the list at runtime
+// instead of duplicating it.
+const VALID_CONNECTORS = ['telegram', 'none'] as const;
+type ConnectorKind = (typeof VALID_CONNECTORS)[number];
 
 
 // ---------------------------------------------------------------------------
@@ -45,7 +51,11 @@ export async function GET() {
 // ---------------------------------------------------------------------------
 // POST /api/agents - Create a new agent
 //
-// Body: { name, org, template, botToken, chatId, allowedUser? }
+// Body: { name, org, template, connector?, botToken?, chatId?, allowedUser? }
+//
+// `connector` defaults to 'telegram' for back-compat with pre-PR-#17 clients.
+// `botToken` + `chatId` are required ONLY when `connector === 'telegram'`;
+// for `connector: 'none'` they're rejected (no .env stub written either).
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -56,10 +66,11 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { name, org, template, botToken, chatId, allowedUser } = body as {
+  const { name, org, template, connector, botToken, chatId, allowedUser } = body as {
     name?: string;
     org?: string;
     template?: string;
+    connector?: string;
     botToken?: string;
     chatId?: string;
     allowedUser?: string;
@@ -92,11 +103,45 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (!botToken || typeof botToken !== 'string') {
-    return Response.json({ error: 'botToken is required' }, { status: 400 });
+  // Connector defaults to 'telegram' so older clients (and curl flows that
+  // omit the field) still succeed with today's semantics.
+  const connectorKind: ConnectorKind = (connector as ConnectorKind | undefined) ?? 'telegram';
+  if (!VALID_CONNECTORS.includes(connectorKind)) {
+    return Response.json(
+      { error: `connector must be one of: ${VALID_CONNECTORS.join(', ')}` },
+      { status: 400 },
+    );
   }
-  if (!chatId || typeof chatId !== 'string') {
-    return Response.json({ error: 'chatId is required' }, { status: 400 });
+  // Credentials are required for Telegram only. Reject them outright on
+  // 'none' so callers can't accidentally leak BOT_TOKEN into a backend
+  // agent's .env file.
+  if (connectorKind === 'telegram') {
+    if (!botToken || typeof botToken !== 'string') {
+      return Response.json({ error: 'botToken is required for the telegram connector' }, { status: 400 });
+    }
+    if (!chatId || typeof chatId !== 'string') {
+      return Response.json({ error: 'chatId is required for the telegram connector' }, { status: 400 });
+    }
+    // Reject CR/LF in credentials before they hit template-literal
+    // interpolation in the .env writer. The CLI's `setup.ts:writeAgentEnv`
+    // has the same guard; without it here a crafted token could smuggle
+    // additional env vars via `\n` (Codex review of #26).
+    if (/[\r\n]/.test(botToken)) {
+      return Response.json({ error: 'botToken must not contain newline characters' }, { status: 400 });
+    }
+    if (/[\r\n]/.test(chatId)) {
+      return Response.json({ error: 'chatId must not contain newline characters' }, { status: 400 });
+    }
+    if (allowedUser && typeof allowedUser === 'string' && /[\r\n]/.test(allowedUser)) {
+      return Response.json({ error: 'allowedUser must not contain newline characters' }, { status: 400 });
+    }
+  } else {
+    if (botToken !== undefined || chatId !== undefined) {
+      return Response.json(
+        { error: `botToken / chatId not accepted for connector: '${connectorKind}'` },
+        { status: 400 },
+      );
+    }
   }
 
   const frameworkRoot = getFrameworkRoot();
@@ -125,15 +170,34 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(agentDir, { recursive: true });
     await copyDir(templateDir, agentDir);
 
-    // 2. Write .env file
-    const envLines = [
-      `BOT_TOKEN=${botToken}`,
-      `CHAT_ID=${chatId}`,
-    ];
-    if (allowedUser) {
-      envLines.push(`ALLOWED_USER=${allowedUser}`);
+    // 2. Write .env file — only for connectors with credentials. `none`
+    //    agents skip this entirely (matches the CLI's add-agent behavior
+    //    after PR #21 / issue #7).
+    if (connectorKind === 'telegram') {
+      const envLines = [
+        `BOT_TOKEN=${botToken}`,
+        `CHAT_ID=${chatId}`,
+      ];
+      if (allowedUser) {
+        envLines.push(`ALLOWED_USER=${allowedUser}`);
+      }
+      await fs.writeFile(path.join(agentDir, '.env'), envLines.join('\n') + '\n', 'utf-8');
     }
-    await fs.writeFile(path.join(agentDir, '.env'), envLines.join('\n') + '\n', 'utf-8');
+
+    // 2b. Persist the connector kind to config.json so the daemon's
+    //     legacy-inference path doesn't have to guess. Read-merge-write so
+    //     we don't trample whatever the template's config.json already had.
+    const configPath = path.join(agentDir, 'config.json');
+    try {
+      const existingCfg = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+      existingCfg.connector = connectorKind;
+      await fs.writeFile(configPath, JSON.stringify(existingCfg, null, 2) + '\n', 'utf-8');
+    } catch {
+      // Template had no config.json or it was unreadable — write a minimal
+      // one so the connector field is still present.
+      const minimal = { agent_name: name, connector: connectorKind, enabled: true };
+      await fs.writeFile(configPath, JSON.stringify(minimal, null, 2) + '\n', 'utf-8');
+    }
 
     // 3. Create state dirs under CTX_ROOT
     const stateDirs = ['inbox', 'outbox', 'processed', 'inflight', 'logs', 'state'];
@@ -171,6 +235,7 @@ export async function POST(request: NextRequest) {
       enabled: true,
       org,
       template,
+      connector: connectorKind,
       createdAt: new Date().toISOString(),
     };
 
