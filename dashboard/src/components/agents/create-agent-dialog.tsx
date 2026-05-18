@@ -58,6 +58,25 @@ const TEMPLATES = [
 
 type Template = (typeof TEMPLATES)[number]['value'];
 
+// Connector catalog — mirrors `src/connectors/index.ts:CONNECTOR_ALLOWLIST`
+// + `CONNECTOR_ENV_KEYS`. Hardcoded here while #18 (the
+// `/api/connectors/kinds` registry endpoint) is in flight; once that lands
+// this list becomes a fetch on mount instead.
+const CONNECTORS = [
+  {
+    value: 'telegram',
+    label: 'Telegram',
+    description: 'Default. Operator messages via Telegram bot. Requires BotFather token + chat ID.',
+  },
+  {
+    value: 'none',
+    label: 'None (no remote channel)',
+    description: 'Backend / offline / batch agent. No credentials needed; reply via dashboard or `bus send`.',
+  },
+] as const;
+
+type ConnectorKind = (typeof CONNECTORS)[number]['value'];
+
 export function CreateAgentDialog({
   open,
   onOpenChange,
@@ -66,6 +85,7 @@ export function CreateAgentDialog({
   const [name, setName] = useState('');
   const [org, setOrg] = useState('agentnet');
   const [template, setTemplate] = useState<Template>('agent');
+  const [connector, setConnector] = useState<ConnectorKind>('telegram');
   const [botToken, setBotToken] = useState('');
   const [chatId, setChatId] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -76,6 +96,7 @@ export function CreateAgentDialog({
     setName('');
     setOrg('agentnet');
     setTemplate('agent');
+    setConnector('telegram');
     setBotToken('');
     setChatId('');
     setError(null);
@@ -93,8 +114,11 @@ export function CreateAgentDialog({
       return 'Name must be lowercase alphanumeric, hyphens, or underscores (cannot start with - or _).';
     if (!org.trim()) return 'Organization is required.';
     if (!template) return 'Template is required.';
-    if (!botToken.trim()) return 'Bot token is required.';
-    if (!chatId.trim()) return 'Chat ID is required.';
+    // Connector-aware validation — `none` agents have no credentials to enter.
+    if (connector === 'telegram') {
+      if (!botToken.trim()) return 'Bot token is required for the Telegram connector.';
+      if (!chatId.trim()) return 'Chat ID is required for the Telegram connector.';
+    }
     return null;
   }
 
@@ -111,16 +135,22 @@ export function CreateAgentDialog({
 
     setSubmitting(true);
     try {
+      const body: Record<string, unknown> = {
+        name: name.trim(),
+        org: org.trim(),
+        template,
+        connector,
+      };
+      // Only send credentials when the connector actually uses them. `none`
+      // agents skip this entirely so the API doesn't write a .env stub.
+      if (connector === 'telegram') {
+        body.botToken = botToken.trim();
+        body.chatId = chatId.trim();
+      }
       const res = await fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          org: org.trim(),
-          template,
-          botToken: botToken.trim(),
-          chatId: chatId.trim(),
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -201,29 +231,55 @@ export function CreateAgentDialog({
             </p>
           </div>
 
-          {/* Bot Token */}
+          {/* Connector — picks how the agent reaches the operator. */}
           <div className="grid gap-1.5">
-            <Label htmlFor="agent-bot-token">Bot Token</Label>
-            <Input
-              id="agent-bot-token"
-              placeholder="123456:ABC-DEF..."
-              value={botToken}
-              onChange={(e) => setBotToken(e.target.value)}
-              disabled={submitting}
-            />
+            <Label>Communication connector</Label>
+            <Select value={connector} onValueChange={(v) => setConnector(v as ConnectorKind)}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a connector" />
+              </SelectTrigger>
+              <SelectContent>
+                {CONNECTORS.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {CONNECTORS.find((c) => c.value === connector)?.description}
+            </p>
           </div>
 
-          {/* Chat ID */}
-          <div className="grid gap-1.5">
-            <Label htmlFor="agent-chat-id">Chat ID</Label>
-            <Input
-              id="agent-chat-id"
-              placeholder="-1001234567890"
-              value={chatId}
-              onChange={(e) => setChatId(e.target.value)}
-              disabled={submitting}
-            />
-          </div>
+          {/* Telegram credential fields — only shown for `connector: 'telegram'`.
+              `none` agents skip these entirely and the form submits without
+              a .env stub. Future non-Telegram connectors will plug in their
+              own credential field group here (gated by connector value). */}
+          {connector === 'telegram' && (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-bot-token">Bot Token</Label>
+                <Input
+                  id="agent-bot-token"
+                  placeholder="123456:ABC-DEF..."
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-chat-id">Chat ID</Label>
+                <Input
+                  id="agent-chat-id"
+                  placeholder="-1001234567890"
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+            </>
+          )}
 
           {/* Feedback */}
           {error && (
