@@ -13,6 +13,7 @@ import {
   CardDescription,
 } from '@/components/ui/card';
 import { SplashScreen } from '@/components/layout/splash-screen';
+import { BrandMark } from '@/components/shared/brand-mark';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -158,9 +159,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm space-y-6 px-4">
         {/* Logo */}
         <div className="text-center space-y-2">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground text-lg font-bold">
-            cO
-          </div>
+          <BrandMark size={48} className="inline-block rounded-xl" />
           <h1 className="text-xl font-semibold tracking-tight">cortextOS</h1>
           <p className="text-sm text-muted-foreground">
             Persistent AI Agent Orchestration
