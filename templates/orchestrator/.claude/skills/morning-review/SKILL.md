@@ -228,7 +228,7 @@ cortextos bus log-event action task_dispatched info --meta '{"to":"<agent>","tas
 **Telegram has a 4096 character limit.** Send as separate messages with brief pauses between.
 
 ```bash
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "<message>"
+cortextos bus send $CTX_AGENT_NAME "<message>"
 ```
 
 ### Briefing structure

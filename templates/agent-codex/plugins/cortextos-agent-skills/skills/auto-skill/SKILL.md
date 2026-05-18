@@ -131,7 +131,7 @@ sed -i '' 's/status: draft/status: active/' plugins/cortextos-agent-skills/skill
 cortextos bus log-event action skill_activated info --meta "{\"skill\":\"[skill-name]\",\"agent\":\"$CTX_AGENT_NAME\"}"
 
 # Notify the user
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Skill activated: [skill-name] is now live and will be used in future sessions."
+cortextos bus send $CTX_AGENT_NAME "Skill activated: [skill-name] is now live and will be used in future sessions."
 
 # ACK the inbox message
 cortextos bus ack-inbox [msg_id]

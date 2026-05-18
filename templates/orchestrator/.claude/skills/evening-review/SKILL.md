@@ -211,7 +211,7 @@ echo "DISPATCHED: $TASK_ID - <title> -> <agent>" >> "memory/$TODAY.md"
 
 Confirm to user:
 ```bash
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Queued X tasks for overnight work:
+cortextos bus send $CTX_AGENT_NAME "Queued X tasks for overnight work:
 - [Task 1] -> [agent]
 - [Task 2] -> [agent]
 

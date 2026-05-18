@@ -46,7 +46,7 @@ cortextos bus check-inbox
 Format into a comprehensive review and send as chunked Telegram messages:
 
 ```bash
-cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "<message chunk>"
+cortextos bus send $CTX_AGENT_NAME "<message chunk>"
 ```
 
 ### Review Template
