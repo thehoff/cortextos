@@ -254,14 +254,10 @@ export const setupCommand = new Command('setup')
       break;
     }
 
-    const initOk = runCli(projectRoot, ['init', orgName, '--instance', instanceId], 'cortextos init');
-    if (!initOk) {
-      console.error('\n  Org creation failed. Fix the errors above and re-run cortextos setup.');
-      iface.close();
-      process.exit(1);
-    }
-
-    // ─── Step 2.5: Connector choice (PR2 of pluggable-connectors stack) ──────
+    // ─── Step 2.5: Connector choice (resolved BEFORE init so secrets.env
+    // template matches the chosen connector — Codex review of PR #21 caught
+    // that init was running with default 'telegram' even when the user
+    // requested 'none', leaving a Telegram-shaped secrets.env behind.) ────────
 
     let chosenConnector: 'telegram' | 'none';
     if (options.connector === 'telegram' || options.connector === 'none') {
@@ -283,6 +279,18 @@ export const setupCommand = new Command('setup')
       const answer = await askDefault(iface, '  Connector choice (1 or 2)', '1');
       chosenConnector = answer.trim() === '2' ? 'none' : 'telegram';
       console.log(`  Connector: ${chosenConnector}\n`);
+    }
+
+    // Now run init with the chosen connector so secrets.env is tailored.
+    const initOk = runCli(
+      projectRoot,
+      ['init', orgName, '--instance', instanceId, '--connector', chosenConnector],
+      'cortextos init',
+    );
+    if (!initOk) {
+      console.error('\n  Org creation failed. Fix the errors above and re-run cortextos setup.');
+      iface.close();
+      process.exit(1);
     }
 
     // ─── Step 3: Orchestrator agent ──────────────────────────────────────────
