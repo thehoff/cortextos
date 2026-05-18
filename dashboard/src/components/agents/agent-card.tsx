@@ -6,10 +6,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { HealthDot } from '@/components/shared/health-dot';
 import { OrgBadge } from '@/components/shared/org-badge';
 import { RuntimeBadge } from '@/components/shared/runtime-badge';
+import { ConnectorBadge } from '@/components/shared/connector-badge';
 import { AgentAvatar } from '@/components/shared/agent-avatar';
 import { AgentActions } from './agent-actions';
 import { IconChecklist } from '@tabler/icons-react';
-import type { AgentRuntime, HealthStatus } from '@/lib/types';
+import type { AgentRuntime, ConnectorKind, HealthStatus } from '@/lib/types';
 
 export interface AgentCardData {
   name: string;
@@ -22,6 +23,7 @@ export interface AgentCardData {
   currentTask?: string;
   tasksToday: number;
   runtime?: AgentRuntime;
+  connector?: ConnectorKind;
 }
 
 interface AgentCardProps {
@@ -68,10 +70,11 @@ export function AgentCard({ agent }: AgentCardProps) {
             />
           </div>
 
-          {/* Org + runtime badges */}
-          <div className="flex items-center gap-1.5">
+          {/* Org + runtime + connector badges */}
+          <div className="flex flex-wrap items-center gap-1.5">
             {agent.org && <OrgBadge org={agent.org} />}
             {agent.runtime && <RuntimeBadge runtime={agent.runtime} />}
+            {agent.connector && <ConnectorBadge connector={agent.connector} />}
           </div>
 
           {/* Current task */}
