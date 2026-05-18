@@ -17,6 +17,7 @@ import { spawnSync } from 'child_process';
 import { TelegramAPI, formatValidateError } from '../telegram/api.js';
 import { getBrandName } from '../branding/index.js';
 import { writeInstanceConfig } from '../branding/instance-config.js';
+import { validateInstanceId } from '../utils/validate.js';
 
 function rl(): Interface {
   return createInterface({ input: process.stdin, output: process.stdout });
@@ -215,6 +216,16 @@ export const setupCommand = new Command('setup')
   .description('Interactive first-run setup wizard — install, create org, configure agents, start daemon')
   .action(async (options: { instance: string; connector: string; whiteLabel: string }) => {
     const instanceId = options.instance;
+    // Validate --instance BEFORE any path construction. Without this, a
+    // value like `../other-dir` would escape the intended `~/.cortextos/`
+    // directory when joined into branding.json / state paths (Codex
+    // review of PR #29 flagged this).
+    try {
+      validateInstanceId(instanceId);
+    } catch (err) {
+      console.error(`  Error: ${(err as Error).message}`);
+      process.exit(1);
+    }
     const projectRoot = findProjectRoot();
     const ctxRoot = join(homedir(), '.cortextos', instanceId);
 
