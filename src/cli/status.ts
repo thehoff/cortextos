@@ -7,7 +7,13 @@ import type { AgentStatus, Heartbeat } from '../types/index.js';
 import { banner, color } from './branding.js';
 
 function colorizeStatus(status: string): string {
-  const norm = status.toLowerCase();
+  // Trim before comparing: callers pass `status.padEnd(12)` values so the
+  // raw input is "running     " and never matched "running". Without this,
+  // every status fell through to color.muted() and the intended green/
+  // yellow/red path never fired (caught by Codex review of PR #30). Color
+  // still wraps the original (padded) string so table column alignment is
+  // preserved.
+  const norm = status.trim().toLowerCase();
   if (norm === 'running' || norm === 'online' || norm === 'healthy') return color.ok(status);
   if (norm === 'starting' || norm === 'restarting' || norm === 'stale') return color.warn(status);
   if (norm === 'crashed' || norm === 'stopped' || norm === 'down') return color.err(status);
