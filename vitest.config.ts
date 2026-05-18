@@ -19,6 +19,7 @@ export default defineConfig({
     include: [
       'tests/**/*.test.ts',
       'dashboard/src/**/__tests__/**/*.test.ts',
+      'dashboard/scripts/**/__tests__/**/*.test.ts',
     ],
   },
 });

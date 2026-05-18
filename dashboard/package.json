@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node scripts/export-tokens.mjs",
+    "export-tokens": "node scripts/export-tokens.mjs",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run --root .. dashboard/src",
+    "test": "vitest run --root .. dashboard/src dashboard/scripts",
     "test:codex": "vitest run --root .. dashboard/src/lib/__tests__/cost-parser-codex.test.ts"
   },
   "dependencies": {
