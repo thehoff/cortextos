@@ -122,6 +122,19 @@ export async function POST(request: NextRequest) {
     if (!chatId || typeof chatId !== 'string') {
       return Response.json({ error: 'chatId is required for the telegram connector' }, { status: 400 });
     }
+    // Reject CR/LF in credentials before they hit template-literal
+    // interpolation in the .env writer. The CLI's `setup.ts:writeAgentEnv`
+    // has the same guard; without it here a crafted token could smuggle
+    // additional env vars via `\n` (Codex review of #26).
+    if (/[\r\n]/.test(botToken)) {
+      return Response.json({ error: 'botToken must not contain newline characters' }, { status: 400 });
+    }
+    if (/[\r\n]/.test(chatId)) {
+      return Response.json({ error: 'chatId must not contain newline characters' }, { status: 400 });
+    }
+    if (allowedUser && typeof allowedUser === 'string' && /[\r\n]/.test(allowedUser)) {
+      return Response.json({ error: 'allowedUser must not contain newline characters' }, { status: 400 });
+    }
   } else {
     if (botToken !== undefined || chatId !== undefined) {
       return Response.json(
