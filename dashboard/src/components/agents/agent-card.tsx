@@ -38,7 +38,7 @@ export function AgentCard({ agent }: AgentCardProps) {
   return (
     <Link href={`/agents/${encodeURIComponent(agent.systemName)}`}>
       <Card className="group relative h-full cursor-pointer transition-all hover:shadow-md hover:border-primary/20">
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-[var(--space-card-y)]">
           {/* Header: avatar + name + health */}
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
@@ -76,14 +76,14 @@ export function AgentCard({ agent }: AgentCardProps) {
 
           {/* Current task */}
           {agent.currentTask ? (
-            <div className="rounded-md bg-muted/40 px-2.5 py-2">
+            <div className="rounded-md bg-muted/40 px-[var(--space-card-box-x)] py-[var(--space-card-box-y)]">
               <p className="text-[11px] text-muted-foreground mb-0.5">Working on</p>
               <p className="text-xs leading-snug line-clamp-2">
                 {agent.currentTask.replace(/^WORKING ON:\s*/i, '')}
               </p>
             </div>
           ) : (
-            <div className="rounded-md bg-muted/20 px-2.5 py-2">
+            <div className="rounded-md bg-muted/20 px-[var(--space-card-box-x)] py-[var(--space-card-box-y)]">
               <p className="text-[11px] text-muted-foreground">
                 {agent.health === 'healthy' ? 'Idle' : healthLabel}
               </p>

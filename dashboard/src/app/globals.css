@@ -249,6 +249,45 @@ tr:hover td {
   --sidebar-ring: oklch(0.762 0.125 82);
 }
 
+/* ============================================
+   Density tokens — controlled by html[data-density]
+   ============================================
+   Default (no attribute) renders identically to "comfortable" — every default
+   value here matches the Tailwind utility it replaces. `compact` tightens the
+   5 high-traffic surfaces wired up in issue #14.
+
+   The pre-hydration script (issue #16) writes html[data-density] before paint
+   based on localStorage `ctx-density`; AppearanceTab is the runtime writer. */
+:root {
+  --space-nav-y: 0.375rem;          /* sidebar nav item py — matches py-1.5 */
+  --height-topbar: 3rem;            /* topbar header — matches h-12 */
+  --height-table-row: 2.5rem;       /* table head row — matches h-10 */
+  --space-table-cell: 0.5rem;       /* table cell padding — matches p-2 */
+  --space-card-y: 0.75rem;          /* card rhythm — matches space-y-3 */
+  --space-card-box-x: 0.625rem;     /* card inner box — matches px-2.5 */
+  --space-card-box-y: 0.5rem;       /* card inner box — matches py-2 */
+  --space-main: 1rem;               /* main content — matches p-4 (mobile) */
+}
+@media (min-width: 768px) {
+  :root { --space-main: 1.25rem; }  /* matches md:p-5 */
+}
+@media (min-width: 1024px) {
+  :root { --space-main: 1.5rem; }   /* matches lg:p-6 */
+}
+
+:root[data-density="compact"] {
+  --space-nav-y: 0.25rem;
+  --height-topbar: 2.5rem;
+  --height-table-row: 2rem;
+  --space-table-cell: 0.375rem;
+  --space-card-y: 0.5rem;
+  --space-card-box-x: 0.5rem;
+  --space-card-box-y: 0.375rem;
+  /* Compact stays compact across breakpoints — user opted for density,
+     don't grow padding at larger viewports. */
+  --space-main: 0.75rem;
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

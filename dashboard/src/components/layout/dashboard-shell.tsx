@@ -56,7 +56,7 @@ export function DashboardShell({ orgs, children }: DashboardShellProps) {
             onOrgChange={setCurrentOrg}
             onMenuClick={() => setSidebarOpen(true)}
           />
-          <main className="flex-1 overflow-auto p-4 pb-20 md:pb-5 md:p-5 lg:p-6 bg-background">
+          <main className="flex-1 overflow-auto p-[var(--space-main)] pb-20 md:pb-[var(--space-main)] bg-background">
             {children}
           </main>
 
