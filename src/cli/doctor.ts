@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync, statSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { banner, color, mark } from './branding.js';
 
 interface Check {
   name: string;
@@ -15,7 +16,7 @@ export const doctorCommand = new Command('doctor')
   .option('--instance <id>', 'Instance ID', 'default')
   .description('Diagnose common issues')
   .action(async (options: { instance: string }) => {
-    console.log('\ncortextOS Doctor\n');
+    console.log(`\n${banner('Doctor')}\n`);
 
     const checks: Check[] = [];
 
@@ -306,15 +307,12 @@ export const doctorCommand = new Command('doctor')
     }
 
     // Display results
-    let hasFailures = false;
     for (const check of checks) {
-      const icon = check.status === 'pass' ? 'OK' : check.status === 'warn' ? 'WARN' : 'FAIL';
-      const prefix = `  [${icon}]`;
-      console.log(`${prefix.padEnd(10)} ${check.name}: ${check.message}`);
+      const m = check.status === 'pass' ? mark.ok() : check.status === 'warn' ? mark.warn() : mark.err();
+      console.log(`  ${m}  ${check.name}: ${check.message}`);
       if (check.fix) {
-        console.log(`           Fix: ${check.fix}`);
+        console.log(`     ${color.muted('Fix:')} ${check.fix}`);
       }
-      if (check.status === 'fail') hasFailures = true;
     }
 
     const warnCount = checks.filter(c => c.status === 'warn').length;
@@ -322,11 +320,11 @@ export const doctorCommand = new Command('doctor')
 
     console.log('');
     if (failCount > 0) {
-      console.log(`  ${failCount} check(s) failed. Fix the issues above and run doctor again.\n`);
+      console.log(`  ${color.err(`${failCount} check(s) failed.`)} Fix the issues above and run doctor again.\n`);
       process.exit(1);
     } else if (warnCount > 0) {
-      console.log(`  All critical checks passed, ${warnCount} warning(s). See above for details.\n`);
+      console.log(`  ${color.ok('All critical checks passed,')} ${color.warn(`${warnCount} warning(s).`)} See above for details.\n`);
     } else {
-      console.log('  All checks passed.\n');
+      console.log(`  ${color.ok('All checks passed.')}\n`);
     }
   });

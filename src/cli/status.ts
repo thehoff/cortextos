@@ -4,6 +4,21 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { IPCClient } from '../daemon/ipc-server.js';
 import type { AgentStatus, Heartbeat } from '../types/index.js';
+import { banner, color } from './branding.js';
+
+function colorizeStatus(status: string): string {
+  // Trim before comparing: callers pass `status.padEnd(12)` values so the
+  // raw input is "running     " and never matched "running". Without this,
+  // every status fell through to color.muted() and the intended green/
+  // yellow/red path never fired (caught by Codex review of PR #30). Color
+  // still wraps the original (padded) string so table column alignment is
+  // preserved.
+  const norm = status.trim().toLowerCase();
+  if (norm === 'running' || norm === 'online' || norm === 'healthy') return color.ok(status);
+  if (norm === 'starting' || norm === 'restarting' || norm === 'stale') return color.warn(status);
+  if (norm === 'crashed' || norm === 'stopped' || norm === 'down') return color.err(status);
+  return color.muted(status);
+}
 
 export const statusCommand = new Command('status')
   .option('--instance <id>', 'Instance ID')
@@ -22,7 +37,8 @@ export const statusCommand = new Command('status')
       }
     } else {
       // Fall back to reading heartbeat files
-      console.log('Daemon is not running. Showing last known heartbeats:\n');
+      console.log(`\n${banner('Status')}\n`);
+      console.log(`  ${color.warn('Daemon is not running.')} Showing last known heartbeats:\n`);
       const ctxRoot = join(homedir(), '.cortextos', instanceId);
       const stateDir = join(ctxRoot, 'state');
 
@@ -63,16 +79,17 @@ export const statusCommand = new Command('status')
       if (rows.length === 0) {
         console.log('  No agents have reported heartbeats.');
       } else {
-        console.log('\n  Last Known Heartbeats\n');
+        console.log(`\n  ${color.bold('Last Known Heartbeats')}\n`);
         const header = '  Name              Status      Last Seen    Current Task';
         const separator = '  ' + '-'.repeat(header.length - 2);
-        console.log(header);
-        console.log(separator);
+        console.log(color.muted(header));
+        console.log(color.muted(separator));
         for (const r of rows) {
           const name = r.agent.padEnd(18);
-          const status = r.status.padEnd(12);
-          const age = r.age.padEnd(13);
-          console.log(`  ${name}${status}${age}${r.task}`);
+          // pad first so the color escape codes don't break column alignment
+          const statusCol = colorizeStatus(r.status.padEnd(12));
+          const age = color.muted(r.age.padEnd(13));
+          console.log(`  ${name}${statusCol}${age}${r.task}`);
         }
         console.log('');
       }
@@ -80,27 +97,30 @@ export const statusCommand = new Command('status')
   });
 
 function displayStatuses(statuses: AgentStatus[]): void {
+  console.log(`\n${banner('Status')}\n`);
+
   if (statuses.length === 0) {
-    console.log('No agents running.');
-    console.log('Add one with: cortextos add-agent <name>');
+    console.log(`  ${color.muted('No agents running.')}`);
+    console.log(`  Add one with: ${color.accent('cortextos add-agent <name>')}`);
     return;
   }
 
-  console.log('\n  Agent Status\n');
+  console.log(`  ${color.bold('Agent Status')}\n`);
 
   // Table header
   const header = '  Name              Status      PID       Uptime      Model';
   const separator = '  ' + '-'.repeat(header.length - 2);
-  console.log(header);
-  console.log(separator);
+  console.log(color.muted(header));
+  console.log(color.muted(separator));
 
   for (const s of statuses) {
     const name = s.name.padEnd(18);
-    const status = s.status.padEnd(12);
+    // pad first so color escapes don't disturb column alignment
+    const statusCol = colorizeStatus(s.status.padEnd(12));
     const pid = (s.pid?.toString() || '-').padEnd(10);
-    const uptime = s.uptime ? formatUptime(s.uptime).padEnd(12) : '-'.padEnd(12);
+    const uptime = color.muted((s.uptime ? formatUptime(s.uptime) : '-').padEnd(12));
     const model = s.model || '-';
-    console.log(`  ${name}${status}${pid}${uptime}${model}`);
+    console.log(`  ${name}${statusCol}${pid}${uptime}${model}`);
   }
 
   console.log('');
