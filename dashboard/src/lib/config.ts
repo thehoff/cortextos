@@ -213,3 +213,7 @@ export function getAllAgents(): Array<{ name: string; org: string }> {
 export function getAllowedRootsConfigPath(): string {
   return path.join(CTX_ROOT, 'config', 'allowed-roots.json');
 }
+
+export function getBrandingConfigPath(ctxRoot: string = CTX_ROOT): string {
+  return path.join(ctxRoot, 'config', 'branding.json');
+}
