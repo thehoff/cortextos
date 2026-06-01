@@ -1,45 +1,60 @@
-# @mycortex/hoff-ui — the BrandPack
+# @mycortex/hoff-ui - Hoff theme package
 
-The Hoff's house brand as a **modular theme pack**. This is the Law 3a overlay:
-it adds files, edits no cortextOS base code, and is consumed identically by the
-Scribe, the dashboard, and (later) the workflow visualiser.
+The Hoff house brand as a cortextOS theme package. This is the first overlay
+built on the shared theming framework in [docs/architecture/theming-framework.md](../../docs/architecture/theming-framework.md).
 
-## The contract
+The package stays brand-only: it adds a theme package and does not modify the
+framework or any base files.
 
-`branding.json` is the single source of truth (the **BrandPack** manifest). It
-declares *semantic slots only* — never component styling:
+## What ships
 
-| Field | Meaning |
-|---|---|
-| `id`, `name` | brand identity |
-| `defaultTheme` | `narrative` (reading) or `dashboard` (ops) |
-| `tokens` | the neutral spine CSS (type, spacing, radius, motion) |
-| `themes.<t>.css` | the signal-palette override for theme `t` |
-| `themes.<t>.palette` | the same palette as data (for charts, JS, non-CSS surfaces) |
-| `chartPalette` | ordered colours for graphs |
-| `typography`, `assets` | fonts, logo/favicon |
+- `theme/theme.json` is the source of truth.
+- `theme/theme.css` is generated from that manifest.
+- `generate.mjs` validates the manifest and regenerates the CSS.
+- The old `tokens/` and `dist/` outputs are gone because nothing in the repo
+  consumes them anymore.
 
-## Generated artifacts (what consumers ingest)
+## Generate and validate
 
-Run the generator (`node generate.mjs` / `npm run build`) to emit `dist/`:
+```bash
+# from the repo root
+node scripts/build-theme.mjs packages/hoff-ui/theme --validate
+# from packages/hoff-ui/
+node generate.mjs
+```
 
-- `brand.css` — one stylesheet: spine + **both** themes. Switch brand by setting
-  `data-theme="narrative|dashboard"` on `<html>`. No clash — both themes redefine
-  the same `--accent`/`--secondary`/… tokens under their own selector.
-- `brand.mjs` — `{ brand, themes, chartPalette, defaultTheme }` for JS consumers.
-- `brand.manifest.json` — the resolved manifest.
-- `chart-palette.json` — ordered chart colours.
+`node generate.mjs` validates `theme/theme.json` against the shared framework
+generator and rewrites `theme/theme.css`. Regeneration is deterministic; rerun
+it and you should get no diff.
 
-**Consumers import these artifacts, never the raw `tokens/` files.** That keeps
-every surface decoupled from the brand internals.
+## Select it
 
-## Relationship to the base theming framework
+At runtime, point cortextOS at the package path:
 
-The base cortextOS dashboard uses `next-themes` (class-based `.dark`) + shadcn
-tokens. The framework PR (separate, base-touching, documented) provides the
-`resolveBrandPack()` seam + maps these `brand.css` variables onto the shadcn
-CSS-var contract and layers on top of next-themes' light/dark. This pack stays
-brand-only and base-agnostic, so it ships as the default brand if upstream takes
-it — or stays a fork overlay if it doesn't.
+```bash
+export CORTEXTOS_THEME=packages/hoff-ui/theme
+```
 
-Tokens are vendored from `~/Personas/thehoff/code/hoff-ui` (no CDN, per its rule).
+Or in `~/.cortextos/<instance>/config/branding.json` (or
+`CTX_ROOT/config/branding.json`):
+
+```json
+{
+  "theme": "packages/hoff-ui/theme"
+}
+```
+
+The framework resolver accepts either a theme package directory or a direct
+`theme.json` path.
+
+## Scribe alignment
+
+Scribe copies the generated Hoff CSS directly from `packages/hoff-ui/theme/theme.css`
+and publishes it under `assets/themes/hoff.css`, so there is no second
+hand-edited Hoff theme file to drift.
+
+## Relation to the framework
+
+If you want to create another brand package in myCortex, start with the
+framework doc above. It defines the contract, resolution order, and bootstrap
+path for every theme package.

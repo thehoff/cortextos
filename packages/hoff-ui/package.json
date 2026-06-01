@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "hoff-ui BrandPack — the Hoff's house brand as a modular theme pack (Law 3a). Vendored tokens + a deterministic Node generator. No CDN, no base edits.",
+  "description": "Hoff theme package — the Hoff house brand as a cortextOS theme package.",
   "exports": {
-    ".": "./dist/brand.mjs",
-    "./brand.css": "./dist/brand.css",
-    "./manifest": "./dist/brand.manifest.json",
-    "./branding.json": "./branding.json"
+    "./branding.json": "./branding.json",
+    "./theme.css": "./theme/theme.css",
+    "./theme.json": "./theme/theme.json"
   },
   "scripts": {
     "build": "node generate.mjs",
-    "test": "node --test"
+    "test": "node --import tsx --test"
+  },
+  "devDependencies": {
+    "tsx": "^4"
   }
 }

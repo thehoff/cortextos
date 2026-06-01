@@ -1,7 +1,8 @@
 # Scribe — markdown → branded HTML (manual tier)
 
-Deterministic Node tool (Law 5, no AI) that renders our markdown into the
-hoff-ui brand: a served static site with two roots —
+Deterministic Node tool (Law 5, no AI) that renders our markdown into the Hoff
+theme package plus the local `cortex-base` fallback: a served static site with
+two roots —
 
 - **`/documentation/`** — narrative theme (reading): specs, reports, notes.
 - **`/dashboard/`** — dashboard theme (ops): stat cards + an inline SVG chart.
@@ -23,10 +24,10 @@ delta,tone}], series:[{label,value}] }` (`tone` ∈ good|warn|bad).
 
 ## How it stays branded
 
-Brand comes only from the **`@mycortex/hoff-ui` BrandPack** — Scribe imports the
-generated `brand.css` (never the raw tokens). Switching theme = setting
-`data-theme="narrative|dashboard"` on `<html>`. To restyle, edit the BrandPack,
-not Scribe.
+Brand comes only from the **Hoff theme package** plus the local `cortex-base`
+fallback. Scribe copies `packages/hoff-ui/theme/theme.css` into its published
+`assets/themes/hoff.css` path, so there is a single Hoff source of truth and no
+second hand-edited theme file to drift. Restyle the package, not Scribe.
 
 ## Pipeline
 
@@ -34,7 +35,7 @@ not Scribe.
 markdown ──▶ render.mjs (markdown-it + highlight.js, mermaid fences)
                  │
                  ▼
-            page.mjs (themed shell + sidebar nav)  ◀── hoff-ui brand.css
+            page.mjs (themed shell + sidebar nav)  ◀── themeFile (hoff.css or cortex-base.css)
                  │
    build.mjs ────┼──▶ /documentation/*.html   (narrative)
                  └──▶ /dashboard/index.html    (dashboard, via dashboard.mjs)

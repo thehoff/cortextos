@@ -1,6 +1,6 @@
 // Scribe build: walk a markdown source tree -> a served static site with two
 // roots — /documentation/ (narrative theme) and /dashboard/ (dashboard theme).
-// Brand comes from the @mycortex/hoff-ui BrandPack (generated, never raw tokens).
+// Brand comes from the Hoff theme package plus the local cortex-base fallback.
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from "node:fs";
 import { join, basename, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,12 +18,21 @@ export async function build(srcDir, outDir, { theme = "cortex-base.css" } = {}) 
     mkdirSync(join(outDir, d), { recursive: true });
   }
 
-  // Layout + theme assets. Scribe copies theme files verbatim; a theme defines
-  // the shadcn contract (cortex-base, or a brand that overrides it).
+  // Layout + theme assets. Scribe copies theme files verbatim; cortex-base is
+  // local, and the Hoff brand is sourced directly from the Hoff theme package.
   writeFileSync(join(outDir, "assets", "scribe.css"), readFileSync(join(scribeRoot, "assets", "scribe.css"), "utf-8"));
   const themesDir = join(scribeRoot, "assets", "themes");
-  for (const f of readdirSync(themesDir)) {
-    if (f.endsWith(".css")) writeFileSync(join(outDir, "assets", "themes", f), readFileSync(join(themesDir, f), "utf-8"));
+  const hoffThemeCss = join(scribeRoot, "..", "..", "packages", "hoff-ui", "theme", "theme.css");
+  const themeSources = [
+    ["cortex-base.css", join(themesDir, "cortex-base.css")],
+  ];
+  if (existsSync(hoffThemeCss)) {
+    themeSources.push(["hoff.css", hoffThemeCss]);
+  } else {
+    console.warn("scribe: hoff theme package not found, publishing cortex-base only");
+  }
+  for (const [fileName, sourcePath] of themeSources) {
+    writeFileSync(join(outDir, "assets", "themes", fileName), readFileSync(sourcePath, "utf-8"));
   }
   const useMermaid = await vendorMermaid(join(outDir, "assets", "mermaid.min.js"));
 

@@ -1,36 +1,34 @@
-// Collision / contract test for the hoff-ui BrandPack (node --test).
-// Proves the generator is deterministic and that the two themes carry the
-// correct, distinct signal palettes onto the SAME token names (--accent etc.)
-// so a consumer switches brand by flipping data-theme, with no clash.
+// Contract test for the hoff theme package (node --test).
+// Proves the generator is deterministic and that the package manifest still
+// emits the expected Hoff palette into the shared shadcn token contract.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generate } from "../generate.mjs";
+import { readFileSync } from "node:fs";
+import { buildThemeCss, loadThemeManifest } from "../../../scripts/build-theme.mjs";
 
-test("generator emits all four artifacts", () => {
+test("generator validates and rewrites the hoff theme css", () => {
   const out = generate();
-  for (const k of ["brand.css", "brand.mjs", "brand.manifest.json", "chart-palette.json"]) {
-    assert.ok(out[k] && out[k].length > 0, `missing ${k}`);
-  }
+  assert.equal(out.manifest.id, "hoff");
+  assert.equal(out.manifest.name, "Hoff");
+  assert.ok(out.themeJsonPath.endsWith("packages/hoff-ui/theme/theme.json"));
+  assert.ok(out.themeCssPath.endsWith("packages/hoff-ui/theme/theme.css"));
+  assert.equal(readFileSync(out.themeCssPath, "utf-8"), out.css);
+  assert.equal(out.css, buildThemeCss(out.manifest));
 });
 
 test("generator is deterministic", () => {
-  assert.deepEqual(generate(), generate());
+  const first = generate();
+  const second = generate();
+  assert.deepEqual(second.manifest, first.manifest);
+  assert.equal(second.css, first.css);
 });
 
-test("brand.css carries both themes on the same --accent token (no clash)", () => {
-  const css = generate()["brand.css"];
-  // narrative pink under data-theme="narrative"
-  assert.match(css, /\[data-theme="narrative"\][\s\S]*?--accent:\s*#ff2e88/);
-  // dashboard mint under data-theme="dashboard"
-  assert.match(css, /\[data-theme="dashboard"\][\s\S]*?--accent:\s*#7fd3a6/);
-});
-
-test("manifest exposes the semantic contract consumers depend on", () => {
-  const m = JSON.parse(generate()["brand.manifest.json"]);
-  assert.equal(m.id, "hoff");
-  assert.equal(m.defaultTheme, "narrative");
-  assert.ok(m.themes.narrative && m.themes.dashboard);
-  assert.equal(m.themes.narrative.palette.accent, "#ff2e88");
-  assert.equal(m.themes.dashboard.palette.accent, "#7fd3a6");
-  assert.ok(Array.isArray(m.chartPalette) && m.chartPalette.length >= 5);
+test("theme manifest round-trips through the framework loader", () => {
+  const out = generate();
+  const manifest = loadThemeManifest(out.themeJsonPath);
+  assert.ok(manifest);
+  assert.equal(manifest.id, "hoff");
+  assert.equal(manifest.light["--primary"], "#ff2e88");
+  assert.equal(manifest.dark["--background"], "#0c0b10");
 });
