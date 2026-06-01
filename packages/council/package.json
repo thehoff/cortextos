@@ -1,0 +1,9 @@
+{
+  "name": "@mycortex/council",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The council dispatcher — deterministic Node orchestrator that fans a task/diff out to the model peers (Codex, AGY, OpenCode/MiniMax) in parallel and aggregates their verdicts. The core 'leverage multiple models seamlessly' engine. Standalone now; bus-worker-ready later.",
+  "bin": { "council": "./cli.mjs" },
+  "scripts": { "test": "node --test" }
+}
