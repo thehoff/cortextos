@@ -114,6 +114,32 @@ Always include `msg_id` as reply_to (auto-ACKs the original). Un-ACK'd messages 
 
 ---
 
+## Delegating to OpenAI-Compatible Specialists
+
+For narrow, well-scoped questions (single-shot RAG queries, classification, summarization, formatted output) prefer dispatching to an **`openai-compatible`** specialist over spinning up a full agent or doing the work yourself. They're lightweight: one LLM call per message against a local endpoint, no skills, no Telegram.
+
+Dispatch is identical to any other agent:
+
+```
+cortextos bus send-message <specialist> normal "<focused question>"
+```
+
+**Optional conversational memory:** prepend `[memory: <thread-id>]` so the specialist's reply uses prior context from the same thread.
+
+```
+cortextos bus send-message rag-1 normal "[memory: thread-42] What was that earlier number?"
+```
+
+`<thread-id>` is any string — reuse it across messages to keep the conversation threaded.
+
+**When to use a specialist vs a full agent:**
+- Specialist: a single LLM call is sufficient (lookups, classification, formatting, one-shot summarization).
+- Full agent: multi-step reasoning, tool use, durable identity required.
+
+**What specialists CANNOT do:** multi-step reasoning beyond one LLM call, skills, Telegram. Decompose multi-step tasks into single questions and combine the replies in your own reasoning.
+
+---
+
 ## Crons
 
 External crons are daemon-managed and live in `${CTX_ROOT}/state/${CTX_AGENT_NAME}/crons.json`. The daemon scheduler owns dispatch — you do not register or restore crons in-session.

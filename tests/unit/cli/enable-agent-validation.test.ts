@@ -4,14 +4,28 @@
  * - BUG-035: discoverProjectRoot() — cwd-independent project root discovery
  * - BUG-013: readEnabledAgents() — defensive validation + backup of corrupt files
  *
+ * Also: PR2 no-regression — claude-code / codex-app-server / hermes agents
+ * still require .env with BOT_TOKEN + CHAT_ID. The runtime short-circuit
+ * added in PR2 must apply ONLY to openai-compatible.
+ *
  * The point of these tests is to lock in the contract: enable's CLI must work
- * from any cwd, and corrupt JSON must NEVER be silently destroyed.
+ * from any cwd, corrupt JSON must NEVER be silently destroyed, and
+ * Telegram-requiring runtimes must NOT be silently let through.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { discoverProjectRoot, readEnabledAgents } from '../../../src/cli/enable-agent';
+
+// Stub the IPC client (the no-regression tests below import enable-agent's
+// command, which references IPCClient internally).
+vi.mock('../../../src/daemon/ipc-server.js', () => ({
+  IPCClient: class {
+    async isDaemonRunning(): Promise<boolean> { return false; }
+    async send(): Promise<{ success: boolean }> { return { success: false }; }
+  },
+}));
 
 describe('BUG-035 + BUG-013: enable-agent validation', () => {
   let tmpHome: string;
@@ -135,6 +149,69 @@ describe('BUG-035 + BUG-013: enable-agent validation', () => {
       const backups = readdirSync(join(tmpHome, '.cortextos', 'default', 'config'))
         .filter(f => f.startsWith('enabled-agents.json.broken-'));
       expect(backups.length).toBe(0);
+    });
+  });
+
+  describe('PR2 no-regression: Telegram-requiring runtimes still need .env', () => {
+    let tempRoot: string;
+
+    beforeEach(() => {
+      tempRoot = mkdtempSync(join(tmpdir(), 'pr2-enable-noreg-'));
+      process.env.CTX_FRAMEWORK_ROOT = tempRoot;
+      process.env.CTX_PROJECT_ROOT = tempRoot;
+    });
+
+    afterEach(() => {
+      rmSync(tempRoot, { recursive: true, force: true });
+    });
+
+    function makeAgent(name: string, runtime: 'claude-code' | 'codex-app-server' | 'hermes' | undefined): void {
+      const agentDir = join(tempRoot, 'orgs', 'testorg', 'agents', name);
+      mkdirSync(agentDir, { recursive: true });
+      writeFileSync(join(agentDir, 'config.json'), JSON.stringify({
+        agent_name: name,
+        ...(runtime ? { runtime } : {}),
+        enabled: true,
+      }, null, 2));
+    }
+
+    it.each([
+      ['claude-code'],
+      ['codex-app-server'],
+      ['hermes'],
+    ])('hard-fails when .env is missing for runtime=%s', async (runtime) => {
+      makeAgent('regress', runtime as any);
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code})`);
+      }) as never);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { enableAgentCommand } = await import('../../../src/cli/enable-agent');
+      await expect(enableAgentCommand.parseAsync([
+        'node', 'cli', 'regress', '--org', 'testorg', '--instance', 'pr2-noreg-test',
+      ])).rejects.toThrow(/process.exit\(1\)/);
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/No \.env found/));
+      exitSpy.mockRestore();
+    });
+
+    it('hard-fails for the implicit-claude case (no runtime field at all)', async () => {
+      // Legacy Claude agents on disk have no runtime field. The runtime
+      // short-circuit must default to claude-code, NOT openai-compatible.
+      makeAgent('legacy-claude', undefined);
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code})`);
+      }) as never);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { enableAgentCommand } = await import('../../../src/cli/enable-agent');
+      await expect(enableAgentCommand.parseAsync([
+        'node', 'cli', 'legacy-claude', '--org', 'testorg', '--instance', 'pr2-noreg-test',
+      ])).rejects.toThrow(/process.exit\(1\)/);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/No \.env found/));
+      exitSpy.mockRestore();
     });
   });
 });

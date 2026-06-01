@@ -24,6 +24,7 @@ import { goalsCommand } from './goals.js';
 import { setupCommand } from './setup.js';
 import { spawnWorkerCommand, terminateWorkerCommand, listWorkersCommand, injectWorkerCommand } from './workers.js';
 import { importAgentCommand } from './import-agent.js';
+import { runOpenAIAgentCommand } from './run-openai-agent.js';
 
 const program = new Command();
 
@@ -58,6 +59,10 @@ program.addCommand(terminateWorkerCommand);
 program.addCommand(listWorkersCommand);
 program.addCommand(injectWorkerCommand);
 program.addCommand(importAgentCommand);
+// Hidden from default --help output: invoked by the openai-compatible PTY
+// adapter (src/pty/openai-compatible-pty.ts), not by end users. Available
+// for manual debugging via `cortextos run-openai-agent` if needed.
+program.addCommand(runOpenAIAgentCommand, { hidden: true });
 
 // crash-alert: SessionEnd hook — cross-platform replacement for crash-alert.sh
 const crashAlertCommand = new Command('crash-alert')

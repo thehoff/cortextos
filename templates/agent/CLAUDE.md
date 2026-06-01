@@ -109,6 +109,26 @@ Always include `msg_id` as reply_to (auto-ACKs the original). Un-ACK'd messages 
 
 ---
 
+## OpenAI-Compatible Specialists
+
+Some agents in your org may be **`openai-compatible`** specialists — lightweight single-purpose agents backed by an OpenAI-compatible LLM endpoint. That endpoint can be local (llama.cpp, vLLM, LM Studio, Ollama, etc.) OR a hosted provider (OpenRouter, Together, Groq, etc.) — the dispatch contract is identical for you either way. You dispatch to them exactly like any other agent:
+
+```
+cortextos bus send-message <specialist> normal "<your question>"
+```
+
+**Optional conversational memory:** prepend a `[memory: <thread-id>]` header so the specialist's reply references prior turns in the same thread.
+
+```
+cortextos bus send-message rag-1 normal "[memory: thread-42] What was that earlier number?"
+```
+
+`<thread-id>` is any string you choose — same id across messages keeps the conversation threaded.
+
+**What openai-compatible specialists CANNOT do:** multi-step reasoning beyond a single LLM call, Claude/codex skills, Telegram. For multi-step work, decompose into single questions and dispatch each separately.
+
+---
+
 ## Crons
 
 External crons are daemon-managed and live in `${CTX_ROOT}/state/${CTX_AGENT_NAME}/crons.json`. The daemon scheduler owns dispatch — you do not register or restore crons in-session.

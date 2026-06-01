@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { OrgContext } from '../types';
 import { validateAgentName } from '../utils/validate';
 
-const VALID_RUNTIMES = ['claude-code', 'hermes', 'codex-app-server'] as const;
+const VALID_RUNTIMES = ['claude-code', 'hermes', 'codex-app-server', 'openai-compatible'] as const;
 type RuntimeKind = typeof VALID_RUNTIMES[number];
 
 // Templates that don't have a codex variant yet. Pairing any of these with
@@ -15,6 +15,14 @@ type RuntimeKind = typeof VALID_RUNTIMES[number];
 // variants exist (PR 11+).
 const NON_CODEX_TEMPLATES = ['orchestrator', 'analyst', 'm2c1-worker', 'hermes'] as const;
 
+// Same idea for openai-compatible: only the agent-thin scaffold makes sense.
+// Pairing openai-compatible with orchestrator/analyst/etc would copy
+// Claude-flavored templates into an agent whose runtime can't satisfy them.
+// `agent-codex` is also excluded — its config.json hard-codes `enabled: true`
+// and the codex skill bootstrap, both of which would conflict with PR1's
+// enabled:false posture for openai-compatible agents.
+const NON_THIN_TEMPLATES = ['orchestrator', 'analyst', 'm2c1-worker', 'hermes', 'agent-codex'] as const;
+
 export const addAgentCommand = new Command('add-agent')
   .argument('<name>', 'Agent name')
   .option('--template <type>', 'Agent template (orchestrator, analyst, agent, agent-codex)', 'agent')
@@ -23,6 +31,13 @@ export const addAgentCommand = new Command('add-agent')
   .option('--runtime <runtime>', `Agent runtime (${VALID_RUNTIMES.join(', ')})`, 'claude-code')
   .description('Add a new agent to the organization')
   .action(async (name: string, options: { template: string; org?: string; instance: string; runtime: string }) => {
+    // Auto-infer runtime from --template agent-thin (symmetry with the codex
+    // template/runtime auto-mapping). If the user supplied agent-thin without
+    // an explicit runtime, the implied runtime is openai-compatible.
+    if (options.template === 'agent-thin' && options.runtime === 'claude-code') {
+      options.runtime = 'openai-compatible';
+    }
+
     if (!VALID_RUNTIMES.includes(options.runtime as RuntimeKind)) {
       console.error(`Error: --runtime must be one of: ${VALID_RUNTIMES.join(', ')} (got "${options.runtime}")`);
       process.exit(1);
@@ -30,6 +45,11 @@ export const addAgentCommand = new Command('add-agent')
 
     if (options.runtime === 'codex-app-server' && (NON_CODEX_TEMPLATES as readonly string[]).includes(options.template)) {
       console.error(`Error: no codex variant of "${options.template}" yet. Use --template agent for a codex agent (or file an issue to track adding a codex-${options.template} variant).`);
+      process.exit(1);
+    }
+
+    if (options.runtime === 'openai-compatible' && (NON_THIN_TEMPLATES as readonly string[]).includes(options.template)) {
+      console.error(`Error: no openai-compatible variant of "${options.template}" yet. Use --template agent-thin (or --template agent) for an openai-compatible agent.`);
       process.exit(1);
     }
     // BUG-041 fix: validate the agent name BEFORE creating anything on disk.
@@ -91,17 +111,22 @@ export const addAgentCommand = new Command('add-agent')
 
     // For codex-app-server, skills live under plugins/cortextos-agent-skills/skills
     // and are copied in by the template; .claude/skills is Claude-Code-only.
+    // openai-compatible agents have no skills at all (single LLM call per message).
     const isCodexAppServer = options.runtime === 'codex-app-server';
-    if (!isCodexAppServer) {
+    const isOpenAICompatible = options.runtime === 'openai-compatible';
+    if (!isCodexAppServer && !isOpenAICompatible) {
       mkdirSync(join(agentDir, '.claude', 'skills'), { recursive: true });
     }
 
     // Resolve template name. Codex agents created with the default --template agent
-    // get the codex-specific bootstrap in templates/agent-codex/. Any explicit
+    // get the codex-specific bootstrap in templates/agent-codex/. Openai-compatible
+    // agents created with the default --template agent get agent-thin. Any explicit
     // --template choice is honored as-is so orchestrator/analyst/etc still work.
     const effectiveTemplate = (isCodexAppServer && options.template === 'agent')
       ? 'agent-codex'
-      : options.template;
+      : (isOpenAICompatible && options.template === 'agent')
+        ? 'agent-thin'
+        : options.template;
 
     // Copy template files
     const templateDir = findTemplateDir(projectRoot, effectiveTemplate);
@@ -165,9 +190,12 @@ export const addAgentCommand = new Command('add-agent')
       }
     }
 
-    // Create .env placeholder with helpful comments
+    // Create .env placeholder with helpful comments.
+    // Skipped for openai-compatible agents: they have no Telegram path and no
+    // CLAUDE_CODE_OAUTH_TOKEN — the env contract is injected by the PTY
+    // adapter from org-level secrets.env and context.json instead.
     const envPath = join(agentDir, '.env');
-    if (!existsSync(envPath)) {
+    if (!isOpenAICompatible && !existsSync(envPath)) {
       writeFileSync(envPath, [
         `# Agent environment for ${name}`,
         '#',
@@ -299,20 +327,33 @@ export const addAgentCommand = new Command('add-agent')
     } catch { /* start fresh */ }
 
     if (!enabledAgents[name]) {
+      // PR1 registered openai-compatible agents as enabled:false because the
+      // PTY dispatch case didn't exist yet. PR2 lands the OpenAICompatiblePTY
+      // adapter and adds 'openai-compatible' to the daemon's dispatch
+      // allowlist, so the belt-and-braces disable is no longer needed —
+      // every runtime registers as enabled:true here, matching the template
+      // posture in templates/agent-thin/config.json.
       enabledAgents[name] = {
         enabled: true,
         status: 'configured',
         ...(org ? { org } : {}),
       };
       writeFileSync(enabledPath, JSON.stringify(enabledAgents, null, 2) + '\n', 'utf-8');
-      console.log(`  Registered in enabled-agents.json`);
+      console.log(`  Registered in enabled-agents.json (enabled=true)`);
     }
 
     console.log(`\n  Agent "${name}" created.`);
     console.log(`\n  Next steps:`);
-    console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram settings`);
-    console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
-    console.log(`    3. Start: cortextos start ${name}\n`);
+    if (isOpenAICompatible) {
+      console.log(`    1. Edit ${join('orgs', org, 'agents', name, 'config.json')} — set "endpoint" and "model"`);
+      console.log(`    2. Customize ${join('orgs', org, 'agents', name, 'SYSTEM_PROMPT.md')}`);
+      console.log(`    3. Enable: cortextos enable ${name} --org ${org}`);
+      console.log(`       (No Telegram .env required — openai-compatible agents skip the Telegram preflight.)\n`);
+    } else {
+      console.log(`    1. Edit ${join('orgs', org, 'agents', name, '.env')} with your Telegram settings`);
+      console.log(`    2. Customize identity files (IDENTITY.md, SOUL.md, GOALS.md)`);
+      console.log(`    3. Start: cortextos start ${name}\n`);
+    }
   });
 
 /**
@@ -369,8 +410,12 @@ function findTemplateDir(projectRoot: string, template: string): string | null {
     join(projectRoot, 'templates', template),
     join(frameworkRoot, 'templates', template),
     join(projectRoot, 'node_modules', 'cortextos', 'templates', template),
-    // Relative to this file for development
-    join(__dirname, '..', '..', 'templates', template),
+    // Relative to this file for development. tsup bundles `dist/cli.js` flat,
+    // so __dirname is `<clone>/dist` and `..` lands at `<clone>/templates`.
+    // (Previously had an extra `..` from an older build layout — the fallback
+    // never resolved when add-agent ran from a non-clone cwd, silently
+    // dropping users into createMinimalAgent.)
+    join(__dirname, '..', 'templates', template),
   ];
 
   for (const dir of candidates) {
