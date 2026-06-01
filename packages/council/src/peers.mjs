@@ -36,6 +36,9 @@ export const PEER_DEFS = {
     model: "gpt-5.4-mini",
     timeoutMs: 600000,   // 10 min — codex exec deep reasoning is slow
     build: (prompt) => ["codex", ["exec", "--skip-git-repo-check", prompt]],
+    // WRITE mode for `council job` — workspace-write confines edits to the cwd
+    // (the lane), not the wider disk.
+    jobBuild: (prompt) => ["codex", ["exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--", prompt]],
   },
   agy: {
     id: "agy",
@@ -49,6 +52,8 @@ export const PEER_DEFS = {
     model: "minimax/MiniMax-M2.7",
     timeoutMs: 900000,   // 15 min — opencode `plan` agent spawns explore subagents; slowest
     build: (prompt) => ["opencode", ["run", "--agent", "plan", "-m", "minimax/MiniMax-M2.7", prompt]],
+    // WRITE mode for `council job` — the `build` agent edits files (plan is read-only).
+    jobBuild: (prompt) => ["opencode", ["run", "--dir", ".", "--agent", "build", "-m", "minimax/MiniMax-M2.7", "--", prompt]],
   },
 };
 

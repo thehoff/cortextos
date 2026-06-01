@@ -5,18 +5,36 @@
 //   council review --diff [--peers ...]      review `git diff` of --cwd
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { execSync } from "node:child_process";
-import { join } from "node:path";
+import { execSync, execFileSync } from "node:child_process";
+import { join, dirname } from "node:path";
 import { resolvePeers } from "./src/peers.mjs";
 import { resolveAgents } from "./src/agents.mjs";
 import { loadCortextAgents } from "./src/cortext-agents.mjs";
 import { review } from "./src/review.mjs";
+import { runJob, workerIds } from "./src/job.mjs";
+import { recordJob, rollup } from "./src/scorecard.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
+const BOOL = new Set(["diff", "json", "review"]);   // value-less flags
 const has = (n) => argv.includes(`--${n}`);
-const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const positional = () => { for (let i = 1; i < argv.length; i++) { if (argv[i].startsWith("--")) { i++; continue; } return argv[i]; } };
+const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] && (!argv[i + 1].startsWith("--") || !BOOL.has(argv[i + 1].slice(2))) ? argv[i + 1] : d; };
+const positional = () => {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      if (!BOOL.has(a.slice(2)) && i + 1 < argv.length && (!argv[i + 1].startsWith("--") || !BOOL.has(argv[i + 1].slice(2)))) i++; // skip this flag's value
+      continue;
+    }
+    return a;
+  }
+};
+// Main repo root even from a linked worktree (git-common-dir → /main/.git → /main),
+// so the scorecard ledger is project-wide and shared across all lanes.
+const mainRepoRoot = (cwd) => {
+  try { return dirname(execSync("git rev-parse --path-format=absolute --git-common-dir", { cwd, encoding: "utf-8" }).trim()); }
+  catch { return null; }
+};
 
 const HELP = `council — multi-model review dispatcher
 
@@ -32,7 +50,64 @@ Options:
   --cwd      working dir for peers / diff
   --instruction "..."   override the critic prompt
   --timeout <ms>        per-peer timeout override (default: per-agent — codex/agy 10m, opencode 15m)
-  --json                print raw JSON`;
+  --json                print raw JSON
+
+  council job --worker <codex|opencode> (--cwd <dir> | --lane <name>) [--review] "<task>"
+                         dispatch a CODING job to ONE worker in a worktree
+  council scorecard      per-worker job rollup (from .council/scorecard.jsonl)`;
+
+// ---- council job : a council member DOES the coding, in a worktree ----------
+if (cmd === "job") {
+  const worker = opt("worker");
+  const task = positional();
+  if (!worker || !task) {
+    console.error(`usage: council job --worker <${workerIds().join("|")}> (--cwd <dir> | --lane <name>) [--review] "<task>"`);
+    process.exit(2);
+  }
+  let dir = opt("cwd");
+  if (!dir && has("lane")) {
+    // Convenience: create the lane via the `worktree` skill (must be on PATH);
+    // --print-path makes it emit just the path. Otherwise use --cwd <dir>.
+    try { dir = execFileSync("worktree", ["new", opt("lane"), "--print-path"], { encoding: "utf-8" }).trim().split("\n").pop().trim(); }
+    catch (e) { console.error(`council job: --lane needs the \`worktree\` skill on PATH — or pass --cwd <dir>. (${e.message})`); process.exit(1); }
+  }
+  if (!dir) { console.error("council job: provide --cwd <worktree-dir> or --lane <name>"); process.exit(2); }
+  if (!mainRepoRoot(dir)) { console.error(`council job: --cwd ${dir} is not a git worktree — point it at a lane (e.g. \`worktree new <name>\`).`); process.exit(2); }
+  const rawT = opt("timeout");
+  const jobTimeout = (has("timeout") && rawT && Number.isFinite(Number(rawT))) ? Number(rawT) : undefined;
+
+  console.error(`council job: ${worker} working in ${dir} …`);
+  const res = await runJob({ worker, cwd: dir, task, timeoutMs: jobTimeout });
+
+  const gitDiff = (a) => { try { return execSync(`git ${a}`, { cwd: dir, encoding: "utf-8", maxBuffer: 32 * 1024 * 1024 }); } catch { return ""; } };
+  try { execSync("git add -A", { cwd: dir }); } catch {}  // stage so NEW (untracked) files show in the diff + review too
+  const diff = gitDiff("diff --cached HEAD") || gitDiff("diff --cached");
+  const filesChanged = (gitDiff("diff --cached --name-only HEAD") || gitDiff("diff --cached --name-only")).split("\n").filter(Boolean).length;
+
+  try {
+    recordJob(mainRepoRoot(dir) || dir, { ts: Math.floor(Date.now() / 1000), worker, task: opt("label", task.slice(0, 100)), lane: dir, ok: res.ok, code: res.code ?? null, error: res.error ?? null, filesChanged });
+  } catch {}
+
+  console.log(`\n=== JOB ${res.ok ? "DONE" : "FAILED"} — ${worker} — ${filesChanged} file(s) changed ===`);
+  if (res.error) console.log(`error: ${res.error}`);
+
+  if (has("review") && diff.trim()) {
+    // Independent review: the OTHER council members critique the worker's diff.
+    const reviewers = resolveAgents({ filter: { role: "council", enabled: true } }).filter((p) => p.id !== worker);
+    console.error(`\ncouncil job: ${reviewers.map((p) => p.id).join(" + ")} reviewing ${worker}'s diff …`);
+    const { summary } = await review({ content: diff, instruction: `Review this diff produced by the '${worker}' worker for the task: ${task}. Hard critic, severity-tagged.`, peers: reviewers, cwd: dir });
+    console.log(`=== REVIEW: responded ${summary.responded}/${summary.dispatched} · quorum ${summary.quorum} · tags ${JSON.stringify(summary.tagTally)} ===`);
+    console.log(`(to commit in the lane, run: node ${process.argv[1]} review --diff --cwd ${dir})`);
+  }
+  process.exit(res.ok ? 0 : 1);
+}
+
+if (cmd === "scorecard") {
+  const root = mainRepoRoot(process.cwd());
+  if (!root) { console.error("scorecard: run inside a git repo"); process.exit(1); }
+  console.log(JSON.stringify(rollup(root), null, 2));
+  process.exit(0);
+}
 
 if (cmd !== "review") { console.log(HELP); process.exit(cmd ? 2 : 0); }
 
@@ -65,7 +140,7 @@ else peers = resolveAgents({ filter: { role: "council", enabled: true } }); // T
 const instruction = opt("instruction", undefined);
 // Optional global override; default undefined → each peer uses its own timeout
 // (PEER_DEFS: codex/agy 10m, opencode 15m). Don't force a short global cap.
-const timeoutMs = has("timeout") ? Number(opt("timeout")) : undefined;
+const timeoutMs = (has("timeout") && Number.isFinite(Number(opt("timeout")))) ? Number(opt("timeout")) : undefined;
 
 console.error(`council: dispatching "${label}" to ${peers.map((p) => p.id).join(", ")} …`);
 const t0 = Date.now();
