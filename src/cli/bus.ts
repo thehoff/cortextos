@@ -1511,22 +1511,42 @@ busCommand
     function scanSkillsDir(dir: string, source: string): Map<string, SkillInfo> {
       const map = new Map<string, SkillInfo>();
       if (!existsSync(dir)) return map;
-      for (const entry of readdirSync(dir)) {
-        const skillFile = join(dir, entry, 'SKILL.md');
-        if (!existsSync(skillFile)) continue;
-        const parsed = parseSkillFrontmatter(skillFile);
-        if (parsed) map.set(parsed.name, { ...parsed, path: skillFile, source });
-      }
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          let isDir = entry.isDirectory();
+          if (!isDir && entry.isSymbolicLink()) {
+            try { isDir = require('fs').statSync(join(dir, entry.name)).isDirectory(); } catch { isDir = false; }
+          }
+          if (!isDir) continue;
+          const skillFile = join(dir, entry.name, 'SKILL.md');
+          if (!existsSync(skillFile)) continue;
+          const parsed = parseSkillFrontmatter(skillFile);
+          if (parsed) map.set(parsed.name, { ...parsed, path: skillFile, source });
+        }
+      } catch { /* skip unreadable dirs */ }
       return map;
     }
 
     // Merge in priority order: framework < template < agent (agent wins)
     const merged = new Map<string, SkillInfo>();
-    for (const [k, v] of scanSkillsDir(join(frameworkRoot, '.claude', 'skills'), 'framework')) merged.set(k, v);
-    if (template) {
-      for (const [k, v] of scanSkillsDir(join(frameworkRoot, 'templates', template, '.claude', 'skills'), `template:${template}`)) merged.set(k, v);
+
+    // Framework-level skills: scan both .claude/skills/ and skills/ (.claude first, skills/ wins on dedup)
+    for (const skillsPath of [join(frameworkRoot, '.claude', 'skills'), join(frameworkRoot, 'skills')]) {
+      for (const [k, v] of scanSkillsDir(skillsPath, 'framework')) merged.set(k, v);
     }
-    for (const [k, v] of scanSkillsDir(join(agentDir, '.claude', 'skills'), 'agent')) merged.set(k, v);
+
+    // Template-level skills: scan both .claude/skills/ and skills/ (.claude first, skills/ wins on dedup)
+    if (template) {
+      for (const skillsPath of [join(frameworkRoot, 'templates', template, '.claude', 'skills'), join(frameworkRoot, 'templates', template, 'skills')]) {
+        for (const [k, v] of scanSkillsDir(skillsPath, `template:${template}`)) merged.set(k, v);
+      }
+    }
+
+    // Agent-level skills: scan both .claude/skills/ and skills/ (.claude first, skills/ wins on dedup)
+    for (const skillsPath of [join(agentDir, '.claude', 'skills'), join(agentDir, 'skills')]) {
+      for (const [k, v] of scanSkillsDir(skillsPath, 'agent')) merged.set(k, v);
+    }
 
     const skills = Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
 

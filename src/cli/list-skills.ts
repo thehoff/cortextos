@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync, Dirent } from 'fs';
 import { join } from 'path';
 
 interface SkillInfo {
@@ -41,17 +41,29 @@ function parseFrontmatter(filePath: string): { name: string; description: string
   }
 }
 
+export function isDirEntry(entry: Dirent, dir: string): boolean {
+  if (entry.isDirectory()) return true;
+  if (entry.isSymbolicLink()) {
+    try {
+      return statSync(join(dir, entry.name)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Scan a skills directory for SKILL.md files.
  */
-function scanSkillsDir(dir: string, source: string): SkillInfo[] {
+export function scanSkillsDir(dir: string, source: string): SkillInfo[] {
   if (!existsSync(dir)) return [];
 
   const skills: SkillInfo[] = [];
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!isDirEntry(entry, dir)) continue;
       const skillFile = join(dir, entry.name, 'SKILL.md');
       if (!existsSync(skillFile)) continue;
 
@@ -110,10 +122,12 @@ export const listSkillsCommand = new Command('list-skills')
       }
     }
 
-    // Agent-level skills (highest priority, override others)
-    const agentSkills = join(agentDir, 'skills');
-    for (const skill of scanSkillsDir(agentSkills, 'agent')) {
-      skillMap.set(skill.name, skill);
+    // Agent-level skills: scan both .claude/skills/ and skills/ (skills/ wins on dedup)
+    const agentSkillsPaths = [join(agentDir, '.claude', 'skills'), join(agentDir, 'skills')];
+    for (const skillsPath of agentSkillsPaths) {
+      for (const skill of scanSkillsDir(skillsPath, 'agent')) {
+        skillMap.set(skill.name, skill);
+      }
     }
 
     const skills = Array.from(skillMap.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -137,8 +151,9 @@ export const listSkillsCommand = new Command('list-skills')
 
 function findTemplateRoot(): string | null {
   const candidates = [
-    join(process.cwd(), 'templates'),
     join(__dirname, '..', '..', 'templates'),
+    join(__dirname, '..', '..', '..', 'templates'),
+    join(process.cwd(), 'templates'),
   ];
   for (const dir of candidates) {
     if (existsSync(dir)) return dir;
