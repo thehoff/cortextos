@@ -3,7 +3,8 @@
 //   council review <path> [--peers codex,agy,opencode] [--instruction "..."]
 //                         [--cwd <dir>] [--timeout <ms>] [--json]
 //   council review --diff [--peers ...]      review `git diff` of --cwd
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { resolvePeers } from "./src/peers.mjs";
@@ -30,7 +31,7 @@ Options:
              (orgs/<org>/agents/*; default ~/.cortextos/orgs)
   --cwd      working dir for peers / diff
   --instruction "..."   override the critic prompt
-  --timeout <ms>        per-peer timeout (default 300000)
+  --timeout <ms>        per-peer timeout override (default: per-agent — codex/agy 10m, opencode 15m)
   --json                print raw JSON`;
 
 if (cmd !== "review") { console.log(HELP); process.exit(cmd ? 2 : 0); }
@@ -38,8 +39,11 @@ if (cmd !== "review") { console.log(HELP); process.exit(cmd ? 2 : 0); }
 const cwd = opt("cwd", process.cwd());
 let content, label;
 if (has("diff")) {
-  content = execSync("git diff", { cwd, encoding: "utf-8", maxBuffer: 32 * 1024 * 1024 });
-  label = "working-tree diff";
+  // `git diff HEAD` = all uncommitted tracked changes (staged + unstaged), stable
+  // across staging — so the marker's hash matches at commit time. Falls back to
+  // `git diff` on a repo with no HEAD yet.
+  content = execSync("git diff HEAD 2>/dev/null || git diff", { cwd, encoding: "utf-8", maxBuffer: 32 * 1024 * 1024 });
+  label = "uncommitted diff (vs HEAD)";
   if (!content.trim()) { console.error("council: empty diff"); process.exit(1); }
 } else {
   const path = positional();
@@ -69,6 +73,24 @@ const { results, summary } = await review({
   content, instruction, peers, cwd, timeoutMs,
   onEvent: (e) => console.error(`  [${e.stage}] ${e.peer}`),
 });
+
+// Stamp a marker so the Law 2 commit-gate hook can verify the working diff was
+// reviewed. Only for --diff reviews (the marker means "this diff was reviewed").
+if (has("diff")) {
+  try {
+    const repoRoot = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8" }).trim();
+    const head = (() => { try { return execSync("git rev-parse HEAD", { cwd, encoding: "utf-8" }).trim(); } catch { return null; } })();
+    mkdirSync(join(repoRoot, ".council"), { recursive: true });
+    writeFileSync(join(repoRoot, ".council", "last-review.json"), JSON.stringify({
+      ts: Math.floor(Date.now() / 1000), label, head,
+      // sha256 of the exact reviewed diff — the gate recomputes `git diff HEAD`
+      // and requires an exact match, so unreviewed edits (or mtime forgery) can't pass.
+      diffHash: createHash("sha256").update(content).digest("hex"),
+      responded: summary.responded, dispatched: summary.dispatched,
+      quorum: summary.quorum, fullPanel: summary.fullPanel, tags: summary.tagTally,
+    }, null, 2));
+  } catch {}
+}
 
 if (has("json")) {
   console.log(JSON.stringify({ label, summary, results }, null, 2));

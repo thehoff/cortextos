@@ -15,7 +15,10 @@ function exec(cmd, args, { cwd, timeoutMs = 600000 } = {}) {
     const finish = (r) => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
     const timer = setTimeout(() => { try { child && child.kill("SIGKILL"); } catch {} finish({ ok: false, error: "timeout", text: out.trim() }); }, timeoutMs);
     try {
-      child = spawn(cmd, args, { cwd });
+      // stdin MUST be closed: codex/agy/opencode read stdin in addition to the
+      // prompt arg ("Reading additional input from stdin...") and block on EOF
+      // forever if it stays open — the REAL cause of the F5 "timeouts".
+      child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     } catch (e) {
       return finish({ ok: false, error: e.message, text: "" });
     }
