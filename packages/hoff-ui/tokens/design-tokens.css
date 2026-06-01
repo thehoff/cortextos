@@ -1,0 +1,142 @@
+/* Vendored from hoff-ui (~/Personas/thehoff/code/hoff-ui/tokens/design-tokens.css).
+ * No-CDN rule: this kit is meant to be vendored. Update via the generator, not by hand. */
+/* ---------------------------------------------------------------
+ * hoff-ui — design tokens (the spine)
+ *
+ * Single source of truth for every visual decision across projects.
+ * Theme files in ./ override the signal colours only; the
+ * neutral ramp, type, spacing, and motion live here permanently.
+ * ------------------------------------------------------------- */
+
+:root {
+  /* === neutrals (theme-independent) === */
+  --bg:           #0c0b10;
+  --bg-1:        #131119;
+  --bg-2:        #16131c;
+  --bg-3:        #1f1a2a;
+  --bg-mid:      #14121b;
+  --bg-2-alpha-8: rgba(244, 241, 234, 0.04);
+
+  --paper:       #f4f1ea;
+  --ink:         #f4f1ea;
+  --ink-soft:    #c5c1cb;
+  --muted:       #8a8695;
+  --dim:         #6b6772;
+  --line:        rgba(244, 241, 234, 0.12);
+  --line-strong: rgba(244, 241, 234, 0.22);
+  --rule:        var(--line);
+
+  /* === semantic ramp (theme files redefine these) === */
+  --accent:        #ff2e88;   /* primary signal — narrative default */
+  --accent-soft:   #ff7ab1;
+  --accent-on:     #0c0b10;   /* fg on accent bg */
+  --secondary:     #a855f7;
+  --secondary-soft:#c084fc;
+  --positive:      #4ade80;   /* "actually worked" */
+  --warn:          #fbbf24;
+  --danger:        #f87171;
+  --info:          #60a5fa;
+  --rose:          #ff7ab1;   /* alias used in older mcm code */
+  --amber:         var(--warn);
+  --cyan:          var(--info);
+  --fg:            var(--ink);
+
+  /* === typography === */
+  --font-body: 'Geist', system-ui, -apple-system, BlinkMacSystemFont,
+                'Segoe UI', Roboto, sans-serif;
+  --font-hand: 'Caveat', cursive;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular,
+                Menlo, monospace;
+  --font-display: var(--font-body);
+
+  --fz-xs:   11px;
+  --fz-sm:   12.5px;
+  --fz-base: 14px;
+  --fz-lg:   16px;
+  --fz-h3:   18px;
+  --fz-h2:   22px;
+  --fz-h1:   30px;
+  --fz-hero: 44px;
+
+  --lh-tight: 1.2;
+  --lh-body:  1.55;
+  --lh-loose: 1.75;
+
+  --tracking-tight:  -0.01em;
+  --tracking-normal:  0;
+  --tracking-wide:    0.04em;
+  --tracking-allcaps: 0.18em;
+
+  /* === spacing (4px grid) === */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+
+  /* === layout === */
+  --wrap:        1200px;
+  --wrap-narrow:  760px;
+  --pad:          40px;
+  --pad-mobile:   16px;
+
+  /* === radius === */
+  --radius-0: 0;
+  --radius-1: 3px;
+  --radius-2: 4px;
+  --radius-3: 8px;
+  --radius-full: 9999px;
+
+  /* === elevation === */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow:    0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --glow:      0 0 24px var(--accent-soft);
+
+  /* === motion === */
+  --ease:   cubic-bezier(.2, .8, .2, 1);
+  --dur-fast: 120ms;
+  --dur:      200ms;
+  --dur-slow: 320ms;
+}
+
+/* ---------- baseline reset (opinionated, optional) ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fz-base);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  line-height: var(--lh-tight);
+  margin: 0 0 var(--space-3);
+}
+
+h1 { font-size: var(--fz-h1); }
+h2 { font-size: var(--fz-h2); }
+h3 { font-size: var(--fz-h3); }
+
+a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+a:hover { color: var(--accent-soft); }
+
+code, kbd, pre, samp {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+hr { border: 0; border-top: 1px dashed var(--line); margin: var(--space-6) 0; }
+
+::selection { background: var(--accent); color: var(--accent-on); }

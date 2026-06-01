@@ -1,0 +1,30 @@
+/* Vendored from hoff-ui themes/narrative.css. Apply AFTER design-tokens.css. */
+:root[data-theme="narrative"], :root.narrative, :root:not([data-theme="dashboard"]) {
+  --accent:        #ff2e88;   /* pink */
+  --accent-soft:   #ff7ab1;
+  --accent-on:     #0c0b10;
+  --secondary:     #a855f7;   /* purple */
+  --secondary-soft:#c084fc;
+  --positive:      #4ade80;
+  --warn:          #fbbf24;
+  --danger:        #f87171;
+  --info:          #60a5fa;
+
+  --font-display: 'Geist', system-ui, sans-serif;
+  --tracking-h1:  -0.015em;
+  --hero-glow:    0 0 32px rgba(255, 46, 136, 0.35);
+}
+
+[data-theme="narrative"] h1, .narrative h1 {
+  letter-spacing: var(--tracking-h1);
+  text-shadow: var(--hero-glow);
+}
+
+[data-theme="narrative"] blockquote, .narrative blockquote {
+  border-left: 3px solid var(--accent);
+  padding: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0;
+  color: var(--ink-soft);
+  background: var(--bg-2);
+  font-style: italic;
+}
