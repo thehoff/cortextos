@@ -59,3 +59,23 @@ export function getIpcPath(instanceId: string = 'default'): string {
   }
   return join(homedir(), '.cortextos', instanceId, 'daemon.sock');
 }
+
+/**
+ * Resolve the framework root used for repo-local assets such as theme packages.
+ * Mirrors the dashboard's CTX_FRAMEWORK_ROOT / CTX_PROJECT_ROOT fallback.
+ */
+export function getFrameworkRoot(): string {
+  return process.env.CTX_FRAMEWORK_ROOT
+    ?? process.env.CTX_PROJECT_ROOT
+    ?? process.cwd();
+}
+
+/**
+ * Resolve the instance branding config path under CTX_ROOT.
+ */
+export function getBrandingConfigPath(ctxRoot?: string): string {
+  const root = ctxRoot && ctxRoot.trim().length > 0
+    ? ctxRoot
+    : process.env.CTX_ROOT ?? join(homedir(), '.cortextos', process.env.CTX_INSTANCE_ID ?? 'default');
+  return join(root, 'config', 'branding.json');
+}
