@@ -16,11 +16,12 @@ function commandExists(cmd: string): boolean {
 }
 
 export const startCommand = new Command('start')
-  .argument('[agent]', 'Specific agent to start (starts all if omitted)')
+  .argument('[agent]', 'Specific agent to start (starts all enabled agents if omitted)')
   .option('--instance <id>', 'Instance ID', 'default')
   .option('--foreground', 'Run daemon in foreground (no PM2, for debugging)')
+  .option('--all', 'Start all enabled agents (default when no agent name is given)')
   .description('Start the cortextOS daemon and agents')
-  .action(async (agent: string | undefined, options: { instance: string; foreground?: boolean }) => {
+  .action(async (agent: string | undefined, options: { instance: string; foreground?: boolean; all?: boolean }) => {
     const ipc = new IPCClient(options.instance);
     const daemonRunning = await ipc.isDaemonRunning();
 
@@ -194,17 +195,36 @@ export const startCommand = new Command('start')
         console.error(`  Error: ${response.error}`);
       }
     } else {
-      const response = await ipc.send({ type: 'status', source: 'cortextos start' });
-      if (response.success) {
-        const statuses = response.data as any[];
-        if (statuses.length === 0) {
-          console.log('No agents configured. Add one with: cortextos add-agent <name>');
+      const ctxRoot = join(homedir(), '.cortextos', options.instance);
+      const enabledPath = join(ctxRoot, 'config', 'enabled-agents.json');
+      let enabledAgents: Record<string, any> = {};
+      try {
+        if (existsSync(enabledPath)) {
+          enabledAgents = JSON.parse(readFileSync(enabledPath, 'utf-8'));
+        }
+      } catch { /* ignore */ }
+
+      const agentsToStart = Object.entries(enabledAgents).filter(([, v]) => (v as any).enabled === true);
+
+      if (agentsToStart.length === 0) {
+        console.log('No enabled agents configured. Add one with: cortextos add-agent <name>');
+        return;
+      }
+
+      console.log(`Starting all enabled agents (${agentsToStart.length})...`);
+      let started = 0;
+      let failed = 0;
+      for (const [name] of agentsToStart) {
+        console.log(`  Starting agent: ${name}`);
+        const response = await ipc.send({ type: 'start-agent', agent: name, source: 'cortextos start' });
+        if (response.success) {
+          console.log(`    ${response.data}`);
+          started++;
         } else {
-          console.log('Agent statuses:');
-          for (const s of statuses) {
-            console.log(`  ${s.name}: ${s.status} (pid: ${s.pid || '-'})`);
-          }
+          console.error(`    Error: ${response.error}`);
+          failed++;
         }
       }
+      console.log(`\nStarted ${started} agent${started !== 1 ? 's' : ''}${failed > 0 ? `, ${failed} failed` : ''}.`);
     }
   });
