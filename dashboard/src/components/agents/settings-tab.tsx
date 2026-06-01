@@ -17,13 +17,18 @@ interface AgentConfig {
   max_session_seconds?: number;
   max_crashes_per_day?: number;
   startup_delay?: number;
-  runtime?: 'claude-code' | 'codex-app-server' | 'hermes';
+  runtime?: 'claude-code' | 'codex-app-server' | 'hermes' | 'openai-compatible';
+  endpoint?: string;
+  api_key_env?: string;
 }
+
+const RUNTIMES = ['claude-code', 'codex-app-server', 'hermes', 'openai-compatible'] as const;
 
 const MODEL_PLACEHOLDER: Record<NonNullable<AgentConfig['runtime']>, string> = {
   'claude-code': 'claude-sonnet-4-5',
   'codex-app-server': 'gpt-5-codex',
   hermes: 'hermes-1',
+  'openai-compatible': 'Qwen3.6-27B-IQ4_XS',
 };
 
 interface SettingsTabProps {
@@ -52,6 +57,11 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
   const [agSaving, setAgSaving] = useState(false);
   const [agMessage, setAgMessage] = useState<MessageState>(null);
 
+  // Section 3: System Prompt (edits the agent's SYSTEM_PROMPT.md)
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [spSaving, setSpSaving] = useState(false);
+  const [spMessage, setSpMessage] = useState<MessageState>(null);
+
   useEffect(() => {
     const controller = new AbortController();
     fetch(`/api/agents/${encodeURIComponent(agentName)}/config`, { signal: controller.signal })
@@ -63,6 +73,33 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
       .catch(err => { if (err.name !== 'AbortError') setLoading(false); });
     return () => controller.abort();
   }, [agentName]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/agents/${encodeURIComponent(agentName)}/system-prompt`, { signal: controller.signal })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d && !controller.signal.aborted) setSystemPrompt(d.systemPrompt ?? ''); })
+      .catch(() => { /* non-fatal */ });
+    return () => controller.abort();
+  }, [agentName]);
+
+  const saveSystemPrompt = async () => {
+    setSpSaving(true);
+    setSpMessage(null);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agentName)}/system-prompt`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: systemPrompt }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      setSpMessage({ type: 'success', text: 'System prompt saved.' });
+    } catch (e) {
+      setSpMessage({ type: 'error', text: e instanceof Error ? e.message : 'Save failed' });
+    } finally {
+      setSpSaving(false);
+    }
+  };
 
   const updateApprovalList = (list: 'always_ask' | 'never_ask', cat: string) => {
     const opposite = list === 'always_ask' ? 'never_ask' : 'always_ask';
@@ -152,6 +189,10 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
         max_session_seconds: config.max_session_seconds,
         max_crashes_per_day: config.max_crashes_per_day,
         startup_delay: config.startup_delay,
+        runtime: config.runtime,
+        ...(config.runtime === 'openai-compatible'
+          ? { endpoint: config.endpoint, api_key_env: config.api_key_env }
+          : {}),
       },
       setAgSaving,
       setAgMessage,
@@ -296,6 +337,17 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
+            <label className="text-xs text-muted-foreground">Runtime</label>
+            <select
+              value={config.runtime ?? 'claude-code'}
+              onChange={e => setConfig(p => ({ ...p, runtime: e.target.value as AgentConfig['runtime'] }))}
+              className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+            >
+              {RUNTIMES.map(rt => <option key={rt} value={rt}>{rt}</option>)}
+            </select>
+          </div>
+
+          <div>
             <label className="text-xs text-muted-foreground">Model</label>
             <input
               type="text"
@@ -305,6 +357,31 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
               className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
             />
           </div>
+
+          {config.runtime === 'openai-compatible' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground">Endpoint (base — /v1/chat/completions is appended)</label>
+                <input
+                  type="text"
+                  value={config.endpoint || ''}
+                  onChange={e => setConfig(p => ({ ...p, endpoint: e.target.value }))}
+                  placeholder="http://nyx.rra.hoff-network.com:8000"
+                  className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">API Key Env Var</label>
+                <input
+                  type="text"
+                  value={config.api_key_env || ''}
+                  onChange={e => setConfig(p => ({ ...p, api_key_env: e.target.value }))}
+                  placeholder="NYX_API_KEY"
+                  className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -352,6 +429,39 @@ export function SettingsTab({ agentName }: SettingsTabProps) {
           >
             <IconDeviceFloppy size={14} />
             {agSaving ? 'Saving...' : 'Save Agent Config'}
+          </button>
+        </CardContent>
+      </Card>
+
+      {/* Section 3: System Prompt */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">System Prompt</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            The agent&apos;s <code>SYSTEM_PROMPT.md</code> — its persona/instructions. Used by every
+            runtime (appended for claude-code; sent as the system message by the openai-compatible runner).
+          </p>
+          <textarea
+            value={systemPrompt}
+            onChange={e => setSystemPrompt(e.target.value)}
+            rows={12}
+            placeholder="You are ..."
+            className="block w-full rounded-md border bg-background px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none"
+          />
+          {spMessage && (
+            <div className={`rounded-md px-3 py-2 text-xs ${spMessage.type === 'success' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+              {spMessage.text}
+            </div>
+          )}
+          <button
+            onClick={saveSystemPrompt}
+            disabled={spSaving}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <IconDeviceFloppy size={14} />
+            {spSaving ? 'Saving...' : 'Save System Prompt'}
           </button>
         </CardContent>
       </Card>

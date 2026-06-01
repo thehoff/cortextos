@@ -1,29 +1,16 @@
 import { NextRequest } from 'next/server';
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { getFrameworkRoot, getAllAgents, getAgentDir } from '@/lib/config';
+import { getFrameworkRoot, resolveAgentDir } from '@/lib/config';
 import { spawnSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
-function resolveAgentConfigPath(frameworkRoot: string, name: string): string | null {
-  // First check via getAllAgents (uses enabled-agents.json + filesystem scan)
-  const allAgents = getAllAgents();
-  const entry = allAgents.find(a => a.name.toLowerCase() === name.toLowerCase());
-  if (entry) {
-    const agentDir = getAgentDir(entry.name, entry.org || undefined);
-    const p = join(agentDir, 'config.json');
-    if (existsSync(p)) return p;
-  }
-
-  // Fallback: search all orgs directories
-  const orgsDir = join(frameworkRoot, 'orgs');
-  if (!existsSync(orgsDir)) return null;
-  for (const org of readdirSync(orgsDir)) {
-    const p = join(orgsDir, org, 'agents', name, 'config.json');
-    if (existsSync(p)) return p;
-  }
-  return null;
+// Shared with the system-prompt route via resolveAgentDir so both resolve the
+// same agent directory (council review: de-duplicated the path resolver).
+function resolveAgentConfigPath(name: string): string | null {
+  const dir = resolveAgentDir(name);
+  return dir ? join(dir, 'config.json') : null;
 }
 
 export async function GET(
@@ -34,8 +21,7 @@ export async function GET(
   if (!/^[a-z0-9_-]+$/.test(name)) {
     return Response.json({ error: 'Invalid agent name' }, { status: 400 });
   }
-  const frameworkRoot = getFrameworkRoot();
-  const configPath = resolveAgentConfigPath(frameworkRoot, name);
+  const configPath = resolveAgentConfigPath(name);
   if (!configPath) {
     return Response.json({ error: 'Agent config not found' }, { status: 404 });
   }
@@ -56,7 +42,7 @@ export async function PATCH(
     return Response.json({ error: 'Invalid agent name' }, { status: 400 });
   }
   const frameworkRoot = getFrameworkRoot();
-  const configPath = resolveAgentConfigPath(frameworkRoot, name);
+  const configPath = resolveAgentConfigPath(name);
   if (!configPath) {
     return Response.json({ error: 'Agent config not found' }, { status: 404 });
   }
@@ -68,8 +54,22 @@ export async function PATCH(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const allowed = ['timezone', 'day_mode_start', 'day_mode_end', 'communication_style', 'approval_rules', 'max_session_seconds', 'max_crashes_per_day', 'startup_delay', 'model', 'ctx_warning_threshold', 'ctx_handoff_threshold'];
+  const allowed = ['timezone', 'day_mode_start', 'day_mode_end', 'communication_style', 'approval_rules', 'max_session_seconds', 'max_crashes_per_day', 'startup_delay', 'model', 'ctx_warning_threshold', 'ctx_handoff_threshold', 'runtime', 'endpoint', 'api_key_env'];
   const timeRegex = /^\d{2}:\d{2}$/;
+
+  // Runtime + openai-compatible local-LLM fields.
+  const RUNTIMES = ['claude-code', 'codex-app-server', 'hermes', 'openai-compatible'];
+  if (body.runtime !== undefined && !RUNTIMES.includes(body.runtime as string)) {
+    return Response.json({ error: `runtime must be one of ${RUNTIMES.join(', ')}` }, { status: 400 });
+  }
+  for (const strField of ['endpoint', 'api_key_env'] as const) {
+    if (body[strField] !== undefined && typeof body[strField] !== 'string') {
+      return Response.json({ error: `${strField} must be a string` }, { status: 400 });
+    }
+  }
+  if (body.endpoint !== undefined && body.endpoint !== '' && !/^https?:\/\//.test(body.endpoint as string)) {
+    return Response.json({ error: 'endpoint must be an http(s) URL' }, { status: 400 });
+  }
   if (body.day_mode_start && !timeRegex.test(body.day_mode_start as string)) {
     return Response.json({ error: 'day_mode_start must be HH:MM' }, { status: 400 });
   }

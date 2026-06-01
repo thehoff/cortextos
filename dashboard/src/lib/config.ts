@@ -117,6 +117,24 @@ export function getAgentDir(name: string, org?: string): string {
   return path.join(CTX_ROOT, 'agents', name);
 }
 
+// Resolve the on-disk dir for an agent by name (one that has a config.json).
+// Shared by the dashboard agent API routes so config + system-prompt resolve
+// the SAME directory. Caller must pre-validate `name` (e.g. /^[a-z0-9_-]+$/).
+export function resolveAgentDir(name: string): string | null {
+  const entry = getAllAgents().find(a => a.name.toLowerCase() === name.toLowerCase());
+  if (entry) {
+    const dir = getAgentDir(entry.name, entry.org || undefined);
+    if (fs.existsSync(path.join(dir, 'config.json'))) return dir;
+  }
+  const orgsDir = path.join(CTX_FRAMEWORK_ROOT, 'orgs');
+  if (!fs.existsSync(orgsDir)) return null;
+  for (const org of fs.readdirSync(orgsDir)) {
+    const dir = path.join(orgsDir, org, 'agents', name);
+    if (fs.existsSync(path.join(dir, 'config.json'))) return dir;
+  }
+  return null;
+}
+
 // -- Discovery functions --
 
 export function getOrgs(): string[] {
