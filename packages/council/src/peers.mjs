@@ -37,8 +37,10 @@ export const PEER_DEFS = {
     timeoutMs: 600000,   // 10 min — codex exec deep reasoning is slow
     build: (prompt) => ["codex", ["exec", "--skip-git-repo-check", prompt]],
     // WRITE mode for `council job` — workspace-write confines edits to the cwd
-    // (the lane), not the wider disk.
-    jobBuild: (prompt) => ["codex", ["exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--", prompt]],
+    // (the lane), not the wider disk. The lane path is passed EXPLICITLY via
+    // --cd: spawn cwd alone is not enough — the worker inherits $PWD from the
+    // shell that launched the dispatcher and may trust it over getcwd().
+    jobBuild: (prompt, cwd) => ["codex", ["exec", "--sandbox", "workspace-write", "--skip-git-repo-check", ...(cwd ? ["--cd", cwd] : []), "--", prompt]],
   },
   agy: {
     id: "agy",
@@ -53,7 +55,11 @@ export const PEER_DEFS = {
     timeoutMs: 900000,   // 15 min — opencode `plan` agent spawns explore subagents; slowest
     build: (prompt) => ["opencode", ["run", "--agent", "plan", "-m", "minimax/MiniMax-M2.7", prompt]],
     // WRITE mode for `council job` — the `build` agent edits files (plan is read-only).
-    jobBuild: (prompt) => ["opencode", ["run", "--dir", ".", "--agent", "build", "-m", "minimax/MiniMax-M2.7", "--", prompt]],
+    // --dir MUST be the absolute lane path: opencode is client-server, and a
+    // relative `--dir .` resolves against the attached server's root (or the
+    // inherited $PWD), NOT the spawn cwd — workers ended up coding in the
+    // dispatcher's own worktree instead of the lane.
+    jobBuild: (prompt, cwd) => ["opencode", ["run", "--dir", cwd || ".", "--agent", "build", "-m", "minimax/MiniMax-M2.7", "--", prompt]],
   },
 };
 

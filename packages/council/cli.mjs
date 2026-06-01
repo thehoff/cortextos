@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { resolvePeers } from "./src/peers.mjs";
 import { resolveAgents } from "./src/agents.mjs";
 import { loadCortextAgents } from "./src/cortext-agents.mjs";
@@ -72,6 +72,9 @@ if (cmd === "job") {
     catch (e) { console.error(`council job: --lane needs the \`worktree\` skill on PATH — or pass --cwd <dir>. (${e.message})`); process.exit(1); }
   }
   if (!dir) { console.error("council job: provide --cwd <worktree-dir> or --lane <name>"); process.exit(2); }
+  // Canonicalise: a relative --cwd would otherwise flow into spawn/--cd/--dir/PWD
+  // and the worker could still resolve it against the dispatcher's directory.
+  dir = resolve(dir);
   if (!mainRepoRoot(dir)) { console.error(`council job: --cwd ${dir} is not a git worktree — point it at a lane (e.g. \`worktree new <name>\`).`); process.exit(2); }
   const rawT = opt("timeout");
   const jobTimeout = (has("timeout") && rawT && Number.isFinite(Number(rawT))) ? Number(rawT) : undefined;
