@@ -180,11 +180,11 @@ if [ -f "$PAUSED_FILE" ]; then
     exit 0
   fi
 
-  echo "$AGENTS_JSON" | "$JQ" -r '.[]' | while IFS= read -r AGENT; do
+  while IFS= read -r AGENT; do
     [ -z "$AGENT" ] && continue
     log "auto-resume start: $AGENT"
     "$CORTEXTOS" start "$AGENT" >> "$LOG" 2>&1 || log "  start failed: $AGENT"
-  done
+  done < <(echo "$AGENTS_JSON" | "$JQ" -r '.[]')
 
   # Archive paused state (keep for audit; do not delete)
   mv "$PAUSED_FILE" "$HISTORY_DIR/paused-$(ts).json"
@@ -213,13 +213,26 @@ fi
 log "TRIGGER remaining=${REMAINING_PCT}% < ${THRESHOLD_PCT}%"
 
 # Snapshot running agents
-RUNNING_JSON='[]'
+RUNNING_JSON=""
 if AGENTS_OUT=$("$CORTEXTOS" bus list-agents 2>/dev/null); then
   RUNNING_JSON=$(echo "$AGENTS_OUT" | "$JQ" -c '[.[] | select(.running == true) | .name]')
   [ -z "$RUNNING_JSON" ] && RUNNING_JSON='[]'
 fi
+
+if [ -z "$RUNNING_JSON" ]; then
+  log "ERROR: snapshot failed: list-agents command failed or returned empty output"
+  MSG="⚠️ Quota watchdog failed to snapshot running agents (list-agents failed). No pause action taken. Watchdog log: $LOG"
+  "$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || log "  telegram failed"
+  exit 0
+fi
+
 COUNT=$(echo "$RUNNING_JSON" | "$JQ" 'length')
 log "running agents: $RUNNING_JSON (count=$COUNT)"
+
+if [ "$COUNT" -eq 0 ]; then
+  log "no running agents detected; skipping pause state write"
+  exit 0
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
   log "DRY-RUN: would stop $COUNT agents and write paused state"
@@ -228,33 +241,59 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-# Stop each running agent
-echo "$RUNNING_JSON" | "$JQ" -r '.[]' | while IFS= read -r AGENT; do
+# Stop each running agent; track which succeeded
+STOPPED=()
+while IFS= read -r AGENT; do
   [ -z "$AGENT" ] && continue
   log "stop: $AGENT"
-  "$CORTEXTOS" stop "$AGENT" >> "$LOG" 2>&1 || log "  stop failed: $AGENT"
-done
+  if "$CORTEXTOS" stop "$AGENT" >> "$LOG" 2>&1; then
+    STOPPED+=("$AGENT")
+  else
+    log "  stop failed: $AGENT"
+  fi
+done < <(echo "$RUNNING_JSON" | "$JQ" -r '.[]')
 
-# Write paused-state file (schema: paused_at, agents_paused, remaining_pct_at_pause + extras)
+STOPPED_COUNT=${#STOPPED[@]}
+
+if [ "$STOPPED_COUNT" -eq 0 ]; then
+  log "ERROR: no agents stopped successfully — not writing paused state"
+  AGENT_LIST=$(echo "$RUNNING_JSON" | "$JQ" -r 'join(", ")')
+  MSG="🚨 Quota watchdog stop loop completed but no agents stopped successfully. RUNNING_JSON had: $AGENT_LIST. paused.json NOT written — manually investigate. Watchdog log: $LOG"
+  "$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || log "  telegram failed"
+  exit 0
+fi
+
+STOPPED_JSON=$(printf '%s\n' "${STOPPED[@]}" | "$JQ" -Rcs 'split("\n") | map(select(length > 0))')
+STOP_FAILED_JSON='[]'
+if [ "$STOPPED_COUNT" -lt "$COUNT" ]; then
+  mapfile -t FAILED_AGENTS < <(echo "$RUNNING_JSON" | "$JQ" -r '.[]' | grep -vxFf <(printf '%s\n' "${STOPPED[@]}"))
+  [ ${#FAILED_AGENTS[@]} -gt 0 ] && STOP_FAILED_JSON=$(printf '%s\n' "${FAILED_AGENTS[@]}" | "$JQ" -Rcs 'split("\n") | map(select(length > 0))')
+fi
+
 cat > "$PAUSED_FILE" <<EOF
 {
   "paused_at": "$(ts)",
-  "agents_paused": $RUNNING_JSON,
+  "agents_paused": $STOPPED_JSON,
   "remaining_pct_at_pause": $REMAINING_PCT,
   "method": "$METHOD",
   "threshold_pct": $THRESHOLD_PCT,
-  "resume_pct": $RESUME_PCT
+  "resume_pct": $RESUME_PCT,
+  "stop_failures": $STOP_FAILED_JSON
 }
 EOF
 log "paused-state written: $PAUSED_FILE"
 
 "$CORTEXTOS" bus log-event action quota_watchdog_pause warning \
-  --meta "{\"remaining_pct\":$REMAINING_PCT,\"method\":\"$METHOD\",\"agents_stopped\":$RUNNING_JSON}" \
+  --meta "{\"remaining_pct\":$REMAINING_PCT,\"method\":\"$METHOD\",\"agents_stopped\":$STOPPED_JSON,\"stop_failures\":$STOP_FAILED_JSON}" \
   >> "$LOG" 2>&1 || log "  log-event failed"
 
-AGENT_LIST=$(echo "$RUNNING_JSON" | "$JQ" -r 'join(", ")')
-MSG="🚨 Quota watchdog tripped. Method=$METHOD, remaining=${REMAINING_PCT}% (threshold ${THRESHOLD_PCT}%). Stopped $COUNT agents: $AGENT_LIST. Will auto-resume once remaining > ${RESUME_PCT}%, or run /root/cortextos/bin/quota-resume.sh manually."
+AGENT_LIST=$(echo "$STOPPED_JSON" | "$JQ" -r 'join(", ")')
+FAIL_MSG=""
+if [ "$STOPPED_COUNT" -lt "$COUNT" ]; then
+  FAIL_MSG=" Stop failures (still running): $(echo "$STOP_FAILED_JSON" | "$JQ" -r 'join(", ")')."
+fi
+MSG="🚨 Quota watchdog tripped. Method=$METHOD, remaining=${REMAINING_PCT}% (threshold ${THRESHOLD_PCT}%). Stopped $STOPPED_COUNT agents: $AGENT_LIST.${FAIL_MSG} Will auto-resume once remaining > ${RESUME_PCT}%, or run /root/cortextos/bin/quota-resume.sh manually."
 "$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || log "  telegram failed"
 
-log "PAUSED $COUNT agents"
+log "PAUSED $STOPPED_COUNT agents"
 exit 0

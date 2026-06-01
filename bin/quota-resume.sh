@@ -57,7 +57,7 @@ echo "Resuming $COUNT agents (paused at $PAUSED_AT):"
 log "resume requested: $COUNT agents (paused_at=$PAUSED_AT)"
 
 FAILED=()
-echo "$AGENTS_JSON" | "$JQ" -r '.[]' | while IFS= read -r AGENT; do
+while IFS= read -r AGENT; do
   [ -z "$AGENT" ] && continue
   echo "  starting: $AGENT"
   if "$CORTEXTOS" start "$AGENT" >> "$LOG" 2>&1; then
@@ -66,21 +66,48 @@ echo "$AGENTS_JSON" | "$JQ" -r '.[]' | while IFS= read -r AGENT; do
     log "  start failed: $AGENT"
     FAILED+=("$AGENT")
   fi
-done
+done < <(echo "$AGENTS_JSON" | "$JQ" -r '.[]')
 
-# Archive the paused-state file rather than delete (auditability)
-ARCHIVE_DIR="$STATE_DIR/history"
-mkdir -p "$ARCHIVE_DIR"
-mv "$PAUSED_FILE" "$ARCHIVE_DIR/paused-$(ts).json"
-log "paused state archived; watchdog re-armed"
+if [ ${#FAILED[@]} -gt 0 ]; then
+  FAILED_LIST=$(printf "%s, " "${FAILED[@]}")
+  FAILED_LIST=${FAILED_LIST%, }
+  echo "Failed to start: $FAILED_LIST"
+  log "resume failed for: $FAILED_LIST"
 
-"$CORTEXTOS" bus log-event action quota_watchdog_resume info \
-  --meta "{\"agents_resumed\":$AGENTS_JSON,\"paused_at\":\"$PAUSED_AT\"}" \
-  >> "$LOG" 2>&1 || true
+  FAILED_JSON=$(printf '%s\n' "${FAILED[@]}" | "$JQ" -Rcs 'split("\n") | map(select(length > 0))')
+  RESUMED_JSON=$(echo "$AGENTS_JSON" | "$JQ" -c --argjson failed "$FAILED_JSON" '. - $failed')
 
-AGENT_LIST=$(echo "$AGENTS_JSON" | "$JQ" -r 'join(", ")')
-MSG="✅ Quota watchdog resumed. Started $COUNT agents: $AGENT_LIST."
-"$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || true
+  cat > "$PAUSED_FILE" <<EOF
+{
+  "paused_at": "$PAUSED_AT",
+  "agents_paused": $FAILED_JSON,
+  "resume_attempted_at": "$(ts)",
+  "resume_attempted_agents": $AGENTS_JSON,
+  "resume_failures": $FAILED_JSON
+}
+EOF
 
-echo "Done. Watchdog re-armed."
-exit 0
+  ARCHIVE_DIR="$STATE_DIR/history"
+  mkdir -p "$ARCHIVE_DIR"
+  cp "$PAUSED_FILE" "$ARCHIVE_DIR/paused-$(ts).json"
+  log "partial resume — paused.json rewritten for failed agents; copy archived"
+
+  MSG="⚠️ Quota watchdog resumed with errors. Started: $(echo "$RESUMED_JSON" | "$JQ" -r 'join(", ")'). Failed to start: $FAILED_LIST. Paused state rewritten — re-run quota-resume.sh to retry failed agents."
+  "$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || true
+  exit 1
+else
+  ARCHIVE_DIR="$STATE_DIR/history"
+  mkdir -p "$ARCHIVE_DIR"
+  mv "$PAUSED_FILE" "$ARCHIVE_DIR/paused-$(ts).json"
+  log "paused state archived; watchdog re-armed"
+
+  "$CORTEXTOS" bus log-event action quota_watchdog_resume info \
+    --meta "{\"agents_resumed\":$AGENTS_JSON,\"paused_at\":\"$PAUSED_AT\"}" \
+    >> "$LOG" 2>&1 || true
+
+  AGENT_LIST=$(echo "$AGENTS_JSON" | "$JQ" -r 'join(", ")')
+  MSG="✅ Quota watchdog resumed. Started $COUNT agents: $AGENT_LIST."
+  "$CORTEXTOS" bus send-telegram "$CHAT_ID" "$MSG" --plain-text >> "$LOG" 2>&1 || true
+  echo "Done. Watchdog re-armed."
+  exit 0
+fi
