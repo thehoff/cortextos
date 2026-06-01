@@ -1,0 +1,19 @@
+{
+  "name": "@mycortex/scribe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scribe — deterministic markdown -> hoff-ui branded HTML publisher (manual tier). Standalone now; cortextOS bus-worker-ready later. Node-for-everything, minimal AI.",
+  "bin": {
+    "scribe": "./cli.mjs"
+  },
+  "scripts": {
+    "demo": "node cli.mjs build ./examples --out ./public && node cli.mjs serve ./public",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0",
+    "markdown-it-anchor": "^9.2.0"
+  }
+}

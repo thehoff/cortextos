@@ -1,0 +1,18 @@
+{
+  "title": "myCortex — Council Ops",
+  "subtitle": "Sample dashboard. Real data wires in when the council emits stage events.",
+  "stats": [
+    { "label": "Council peers wired", "value": "4", "delta": "Claude + Codex + AGY + OpenCode", "tone": "good" },
+    { "label": "Shared MCP tools", "value": "2", "delta": "Context7 + Honcho" },
+    { "label": "Base tests passing", "value": "1531", "delta": "8 failing / 48 skipped", "tone": "warn" },
+    { "label": "Five laws", "value": "5", "delta": "documented + enforced", "tone": "good" }
+  ],
+  "chartTitle": "Branding branches ahead of fork/main (commits)",
+  "series": [
+    { "label": "per-org-theme-overrides", "value": 48 },
+    { "label": "white-label-config", "value": 47 },
+    { "label": "design-token-export", "value": 41 },
+    { "label": "brand-assets-code", "value": 39 },
+    { "label": "branding-contract", "value": 7 }
+  ]
+}

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>myCortex — Branding Foundation Decision (council-reviewed)</title>
+<link rel="stylesheet" href="../assets/themes/hoff.css">
+<link rel="stylesheet" href="../assets/scribe.css">
+</head>
+<body>
+<div class="shell">
+<aside class="nav"><a class="nav-brand" href="../index.html">myCortex</a>
+<div class="nav-group"><div class="nav-head">Documentation</div><a href="../documentation/hoff-ui-brandpack.html">@mycortex/hoff-ui — the BrandPack</a><a href="../documentation/2026-06-01-mycortex-branding-foundation-decision.html">myCortex — Branding Foundation Decision (council-reviewed)</a><a href="../documentation/2026-06-01-mycortex-foundation-design.html">myCortex v0 — Foundation Design</a></div>
+<div class="nav-group"><div class="nav-head">Ops</div><a href="../dashboard/index.html">Dashboard</a></div></aside>
+<main class="main narrow"><h1 id="mycortex-%E2%80%94-branding-foundation-decision-(council-reviewed)" tabindex="-1"><a class="header-anchor" href="#mycortex-%E2%80%94-branding-foundation-decision-(council-reviewed)">myCortex — Branding Foundation Decision (council-reviewed)</a></h1>
+<p><strong>Date:</strong> 2026-06-01
+<strong>Status:</strong> Decided (architecture); implementation pending
+<strong>Method:</strong> 3-model design panel — Codex (gpt-5.4-mini), AGY (Gemini), OpenCode
+(MiniMax M2.7) — run in parallel, then synthesised. Raw panel outputs were in
+<code>/tmp/panel-{codex,agy,opencode}.md</code>.</p>
+<h2 id="the-ask-(the-hoff)" tabindex="-1"><a class="header-anchor" href="#the-ask-(the-hoff)">The ask (the Hoff)</a></h2>
+<p>Establish branding FIRST (before the Scribe HTML tool and the rest of the fork
+consolidation). Use the Hoff's colours/brand, BUT aligned to the cortextOS base
+theming framework so the <em>framework</em> can be <strong>released with the base</strong> — the
+brand is one theme on top, not a hardcoded reskin. <strong>Any change to cortextOS
+base for theme/branding is a clean feature branch + PR, documented obviously</strong>
+(Law 3b). The hoff brand itself is a modular overlay (Law 3a).</p>
+<h2 id="verified-reality-(the-blocker-the-panel-caught)" tabindex="-1"><a class="header-anchor" href="#verified-reality-(the-blocker-the-panel-caught)">Verified reality (the blocker the panel caught)</a></h2>
+<p>The base cortextOS <strong>dashboard</strong> already has a theming system, and it is NOT
+hoff-ui's:</p>
+<ul>
+<li><code>next-themes</code> with <code>&lt;ThemeProvider attribute=&quot;class&quot; defaultTheme=&quot;light&quot;&gt;</code>.</li>
+<li>shadcn + Tailwind v4; <code>@custom-variant dark (&amp;:is(.dark *))</code> — <strong>class-based</strong>
+dark mode (<code>.dark</code>), light default.</li>
+<li>Font <strong>Sora</strong> (not Geist); shadcn CSS vars (<code>--background</code>, <code>--foreground</code>…).</li>
+</ul>
+<p>hoff-ui uses <code>:root[data-theme=&quot;narrative|dashboard&quot;]</code>, Geist/JetBrains/Caveat,
+dark-first, pink/purple (narrative) + mint/cyan (dashboard).</p>
+<p><strong>These two systems fight</strong> (class+next-themes vs <code>data-theme</code>; light vs dark;
+Sora vs Geist; shadcn tokens vs hoff tokens). Reconciling them is the core
+technical problem — not a cosmetic reskin.</p>
+<h2 id="council-convergence-(high-confidence-%E2%80%94-all-three-agreed)" tabindex="-1"><a class="header-anchor" href="#council-convergence-(high-confidence-%E2%80%94-all-three-agreed)">Council convergence (high confidence — all three agreed)</a></h2>
+<ol>
+<li><strong>Single source of truth = a brand schema, not raw CSS.</strong> A <code>BrandPack</code> /
+<code>branding.json</code> manifest describes <em>semantic slots only</em>: theme id, base theme
+(narrative/dashboard), token overrides, chart palette, typography, assets, PWA
+metadata. A small <strong>Node generator</strong> emits deterministic artifacts:
+<code>brand.css</code> (CSS custom properties), <code>brand.mjs</code> (theme data), a manifest, and
+a chart-palette JSON.</li>
+<li><strong>Consumers ingest the generated artifacts via a thin adapter — never raw
+tokens.</strong> Dashboard, Scribe, and the future visualiser each import the brand
+package independently. No shared cross-surface TypeScript types. This keeps
+cortextOS mergeable and Scribe/visualiser decoupled (Law 3a).</li>
+<li><strong>hoff brand = a pluggable package</strong> (e.g. <code>packages/hoff-ui/</code> /
+<code>@mycortex/brand-hoff</code>). Base ships a <strong>neutral default pack + a single
+injection seam</strong> (<code>resolveBrandPack()</code> / the <code>--white-label</code> flag): load pack
+from file/path/env, apply pre-hydration CSS vars, then hydrate. <strong>No base
+component imports brand-specific values.</strong> If upstream rejects the hoff brand,
+the framework still ships; the fork points <code>branding.json</code> at the hoff pack.</li>
+<li><strong>Consolidation order:</strong> <code>branding-contract-and-pre-hydration</code> + <code>white-label- config</code> first (co-dependent pair) → <code>per-org-theme-overrides</code> →
+<code>design-token-export</code> + <code>brand-assets-code</code> (either order) → <code>cli-visual-polish</code>
+last (isolated, lowest risk).</li>
+</ol>
+<h2 id="repo-reality-(git-verified)" tabindex="-1"><a class="header-anchor" href="#repo-reality-(git-verified)">Repo reality (git-verified)</a></h2>
+<ul>
+<li><code>feat/branding-contract-and-pre-hydration</code> is the common ancestor; <code>white-label- config</code>, <code>per-org-theme-overrides</code>, <code>design-token-export</code>, <code>brand-assets-code</code>
+are <strong>siblings</strong> off it (no single tip contains all) → sequenced multi-merge
+with likely sibling conflicts.</li>
+<li>Every branding branch diffs ~10k lines from the stale <code>fork/main</code> because they
+also carry the <strong>connector</strong> stack — branding and connectors land together.</li>
+</ul>
+<h2 id="risks-(merged-from-the-panel)" tabindex="-1"><a class="header-anchor" href="#risks-(merged-from-the-panel)">Risks (merged from the panel)</a></h2>
+<ul>
+<li><strong>Blocker — theming-system clash:</strong> next-themes(<code>.dark</code> class) vs <code>data-theme</code>;
+the <code>--white-label</code>/brand layer must switch the <em>full</em> CSS-var set, not a
+subset, or both themes break.</li>
+<li><strong>Blocker — pre-hydration/FOUC:</strong> server and client must resolve the same pack,
+or Next.js flashes/!mismatches.</li>
+<li><strong>Blocker — Scribe has no renderer yet:</strong> <code>tools/scribe/cli.mjs</code> is declared in
+package.json but not written; the brand system needs a consumer to prove it.</li>
+<li><strong>High — token drift:</strong> CLI (<code>src/branding</code>) vs dashboard (<code>dashboard/src/lib/ branding.ts</code>) must stay in sync; add a test that enforces it.</li>
+<li><strong>Med — CLI/ANSI:</strong> terminal output can't use CSS; needs native colour codes.</li>
+</ul>
+<h2 id="decision" tabindex="-1"><a class="header-anchor" href="#decision">Decision</a></h2>
+<p>Build the <strong>theming framework</strong> as a documented, upstream-clean <strong>feature branch +
+PR</strong> on the base (Law 3b), and the <strong>hoff brand</strong> as a <strong>modular pack</strong> (Law 3a),
+sharing the <code>BrandPack</code> contract. Reconcile the dashboard's next-themes/shadcn
+system by mapping hoff signal tokens onto the shadcn CSS-var contract and adding a
+<code>data-brand</code>/pack layer <em>on top of</em> next-themes' light/dark — not replacing it.</p>
+<h2 id="first-action-(council-consensus)" tabindex="-1"><a class="header-anchor" href="#first-action-(council-consensus)">First action (council consensus)</a></h2>
+<p>Lock the <code>BrandPack</code> schema, build a minimal <code>packages/hoff-ui</code> token package
+(signal palette only: narrative pink/purple/green, dashboard mint/cyan/amber) as
+CSS custom properties + the Node generator, and a <strong>collision test</strong> proving the
+hoff tokens override the base cleanly — driving the dashboard AND Scribe end-to-end.</p>
+<h2 id="process-(the-hoff's-directive)" tabindex="-1"><a class="header-anchor" href="#process-(the-hoff's-directive)">Process (the Hoff's directive)</a></h2>
+<ul>
+<li>Base-touching theming-framework work → branch <code>feat/theming-framework</code> (or
+consolidate the existing branding branches), PR-style, <strong>documented obviously</strong>
+(README/ADR + tests). Upstream-clean.</li>
+<li>hoff brand → <code>packages/hoff-ui</code> modular pack, never edits base components.</li>
+<li>Never auto-push to upstream; PRs are the Hoff's to open.</li>
+</ul>
+</main>
+</div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if(window.mermaid){window.mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});}</script>
+</body>
+</html>

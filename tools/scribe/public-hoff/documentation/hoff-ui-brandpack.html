@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@mycortex/hoff-ui — the BrandPack</title>
+<link rel="stylesheet" href="../assets/themes/hoff.css">
+<link rel="stylesheet" href="../assets/scribe.css">
+</head>
+<body>
+<div class="shell">
+<aside class="nav"><a class="nav-brand" href="../index.html">myCortex</a>
+<div class="nav-group"><div class="nav-head">Documentation</div><a href="../documentation/hoff-ui-brandpack.html">@mycortex/hoff-ui — the BrandPack</a><a href="../documentation/2026-06-01-mycortex-branding-foundation-decision.html">myCortex — Branding Foundation Decision (council-reviewed)</a><a href="../documentation/2026-06-01-mycortex-foundation-design.html">myCortex v0 — Foundation Design</a></div>
+<div class="nav-group"><div class="nav-head">Ops</div><a href="../dashboard/index.html">Dashboard</a></div></aside>
+<main class="main narrow"><h1 id="%40mycortex%2Fhoff-ui-%E2%80%94-the-brandpack" tabindex="-1"><a class="header-anchor" href="#%40mycortex%2Fhoff-ui-%E2%80%94-the-brandpack">@mycortex/hoff-ui — the BrandPack</a></h1>
+<p>The Hoff's house brand as a <strong>modular theme pack</strong>. This is the Law 3a overlay:
+it adds files, edits no cortextOS base code, and is consumed identically by the
+Scribe, the dashboard, and (later) the workflow visualiser.</p>
+<h2 id="the-contract" tabindex="-1"><a class="header-anchor" href="#the-contract">The contract</a></h2>
+<p><code>branding.json</code> is the single source of truth (the <strong>BrandPack</strong> manifest). It
+declares <em>semantic slots only</em> — never component styling:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code>, <code>name</code></td>
+<td>brand identity</td>
+</tr>
+<tr>
+<td><code>defaultTheme</code></td>
+<td><code>narrative</code> (reading) or <code>dashboard</code> (ops)</td>
+</tr>
+<tr>
+<td><code>tokens</code></td>
+<td>the neutral spine CSS (type, spacing, radius, motion)</td>
+</tr>
+<tr>
+<td><code>themes.&lt;t&gt;.css</code></td>
+<td>the signal-palette override for theme <code>t</code></td>
+</tr>
+<tr>
+<td><code>themes.&lt;t&gt;.palette</code></td>
+<td>the same palette as data (for charts, JS, non-CSS surfaces)</td>
+</tr>
+<tr>
+<td><code>chartPalette</code></td>
+<td>ordered colours for graphs</td>
+</tr>
+<tr>
+<td><code>typography</code>, <code>assets</code></td>
+<td>fonts, logo/favicon</td>
+</tr>
+</tbody>
+</table>
+<h2 id="generated-artifacts-(what-consumers-ingest)" tabindex="-1"><a class="header-anchor" href="#generated-artifacts-(what-consumers-ingest)">Generated artifacts (what consumers ingest)</a></h2>
+<p>Run the generator (<code>node generate.mjs</code> / <code>npm run build</code>) to emit <code>dist/</code>:</p>
+<ul>
+<li><code>brand.css</code> — one stylesheet: spine + <strong>both</strong> themes. Switch brand by setting
+<code>data-theme=&quot;narrative|dashboard&quot;</code> on <code>&lt;html&gt;</code>. No clash — both themes redefine
+the same <code>--accent</code>/<code>--secondary</code>/… tokens under their own selector.</li>
+<li><code>brand.mjs</code> — <code>{ brand, themes, chartPalette, defaultTheme }</code> for JS consumers.</li>
+<li><code>brand.manifest.json</code> — the resolved manifest.</li>
+<li><code>chart-palette.json</code> — ordered chart colours.</li>
+</ul>
+<p><strong>Consumers import these artifacts, never the raw <code>tokens/</code> files.</strong> That keeps
+every surface decoupled from the brand internals.</p>
+<h2 id="relationship-to-the-base-theming-framework" tabindex="-1"><a class="header-anchor" href="#relationship-to-the-base-theming-framework">Relationship to the base theming framework</a></h2>
+<p>The base cortextOS dashboard uses <code>next-themes</code> (class-based <code>.dark</code>) + shadcn
+tokens. The framework PR (separate, base-touching, documented) provides the
+<code>resolveBrandPack()</code> seam + maps these <code>brand.css</code> variables onto the shadcn
+CSS-var contract and layers on top of next-themes' light/dark. This pack stays
+brand-only and base-agnostic, so it ships as the default brand if upstream takes
+it — or stays a fork overlay if it doesn't.</p>
+<p>Tokens are vendored from <code>~/Personas/thehoff/code/hoff-ui</code> (no CDN, per its rule).</p>
+</main>
+</div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if(window.mermaid){window.mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});}</script>
+</body>
+</html>

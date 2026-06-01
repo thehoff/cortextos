@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>myCortex v0 — Foundation Design</title>
+<link rel="stylesheet" href="../assets/themes/hoff.css">
+<link rel="stylesheet" href="../assets/scribe.css">
+</head>
+<body>
+<div class="shell">
+<aside class="nav"><a class="nav-brand" href="../index.html">myCortex</a>
+<div class="nav-group"><div class="nav-head">Documentation</div><a href="../documentation/hoff-ui-brandpack.html">@mycortex/hoff-ui — the BrandPack</a><a href="../documentation/2026-06-01-mycortex-branding-foundation-decision.html">myCortex — Branding Foundation Decision (council-reviewed)</a><a href="../documentation/2026-06-01-mycortex-foundation-design.html">myCortex v0 — Foundation Design</a></div>
+<div class="nav-group"><div class="nav-head">Ops</div><a href="../dashboard/index.html">Dashboard</a></div></aside>
+<main class="main narrow"><h1 id="mycortex-v0-%E2%80%94-foundation-design" tabindex="-1"><a class="header-anchor" href="#mycortex-v0-%E2%80%94-foundation-design">myCortex v0 — Foundation Design</a></h1>
+<p><strong>Date:</strong> 2026-06-01
+<strong>Status:</strong> Approved (design); spec under review
+<strong>Owner:</strong> the Hoff</p>
+<h2 id="purpose" tabindex="-1"><a class="header-anchor" href="#purpose">Purpose</a></h2>
+<p>myCortex is the Hoff's own agentic OS — a core framework to drive multiple
+models seamlessly, reusable across the council and other projects. v0 forks
+the cortextOS runtime as its base, encodes the project's four laws as enforced
+convention, and stands up the two capabilities that make those laws real:
+parallel agent workstreams and an advisory tri-model peer-review gate.</p>
+<p>This is not greenfield: cortextOS already provides the Foreman-shaped runtime
+(persistent agents, PTY backends, Telegram bus, dashboard). We build on top and
+keep our work back-portable.</p>
+<h2 id="revised-base-%E2%80%94-the-hoff's-own-fork-(discovered-on-framework)" tabindex="-1"><a class="header-anchor" href="#revised-base-%E2%80%94-the-hoff's-own-fork-(discovered-on-framework)">REVISED BASE — the Hoff's own fork (discovered on <code>framework</code>)</a></h2>
+<p>The real base is <strong>not</strong> the pristine upstream survey copy. The Hoff's fork
+<code>thehoff/cortextos</code> (host <code>framework</code>, <code>~/GitHub/cortextos</code>; <code>origin</code> =
+<a href="http://github.com/thehoff/cortextos">github.com/thehoff/cortextos</a>, <code>upstream</code> = grandamenium/cortextos) already
+carries substantial unmerged work on <code>feat/*</code> branches. Several things this
+spec proposed to <em>build</em> already exist there and need <strong>consolidating/bringing
+over</strong>, not inventing:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Existing branch(es)</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pluggable connectors (the Telegram-comms example)</td>
+<td><code>feat/connector-abstraction</code>, <code>-hooks-cli</code>, <code>-metadata-surface</code>; <code>bus send</code> neutral refactor</td>
+<td>Built, modular (Law 3a)</td>
+</tr>
+<tr>
+<td>Theming / white-label (the theming uplift)</td>
+<td><code>feat/white-label-config</code> (branding.json + <code>--white-label</code>), <code>feat/per-org-theme-overrides</code>, <code>feat/design-token-export</code>, <code>feat/branding-contract-and-pre-hydration</code>, <code>feat/brand-assets-code</code></td>
+<td>Built — largely the uplift I proposed</td>
+</tr>
+<tr>
+<td>OpenAI runtime + provider abstraction</td>
+<td><code>feat/openai-runtime-{scaffold,provider,dispatch,tools}</code></td>
+<td>Built</td>
+</tr>
+<tr>
+<td><strong><code>src/pty/openai-compatible-pty.ts</code></strong></td>
+<td><code>feat/openai-runtime-provider</code></td>
+<td><strong>The seam for OpenCode/MiniMax AND local LLMs (all OpenAI-compatible)</strong></td>
+</tr>
+<tr>
+<td>MCP support</td>
+<td>upstream (someone else's PR) + Hoff's <code>feat/openai-runtime-mcp</code>, <code>-mcp-dashboard</code>, <code>skills/mcp-integration</code></td>
+<td><strong>Someone else's upstream PR</strong> — pull down when it lands; reconcile the Hoff's branch against it (prefer upstream, Law 3) rather than duplicate</td>
+</tr>
+<tr>
+<td>Worker <code>--model</code> flag</td>
+<td><code>fix/issue-283-spawn-worker-model-flag</code></td>
+<td>On origin <strong>and</strong> upstream (partly upstreamed)</td>
+</tr>
+<tr>
+<td>Codex runtime</td>
+<td><code>codex-app-server</code> (#369), <code>feat/codex-pty-*</code></td>
+<td>On main/upstream</td>
+</tr>
+</tbody>
+</table>
+<p>Key facts:</p>
+<ul>
+<li><code>main</code> is <strong>28 behind upstream, 0 ahead</strong> — main ≈ upstream; the Hoff's
+contributions are the unmerged <code>feat/*</code> branches.</li>
+<li><code>cortextos-models/</code> holds only <code>ggml-tiny.en.bin</code> (whisper voice model), not
+an LLM. &quot;Local LLM support&quot; is really: point <code>openai-compatible-pty</code> at a
+local OpenAI-compatible endpoint (vLLM / llama.cpp / LM Studio) + the
+<code>--model</code> worker flag — i.e. <strong>already-modular</strong>, just not yet wired/brought
+over for local targets.</li>
+</ul>
+<p><strong>Implication for the fork mechanic:</strong> myCortex consolidates from
+<code>thehoff/cortextos</code> (his fork, which already has the <code>upstream</code> remote), folding
+in the relevant <code>feat/*</code> branches — rather than importing the pristine survey
+copy and rebuilding. This needs the Hoff's confirmation (it supersedes the
+earlier &quot;import the survey copy&quot; assumption).</p>
+<h2 id="the-five-laws-(project-constitution)" tabindex="-1"><a class="header-anchor" href="#the-five-laws-(project-constitution)">The five laws (project constitution)</a></h2>
+<ol>
+<li><strong>Parallel agent workstreams.</strong> Decompose work across isolated agents in
+git worktrees as the default. This applies to <em>coding workers</em> (each peer
+can own a workstream) as well as reviews — not just one model at a time.</li>
+<li><strong>Mandatory tri-model peer review.</strong> Every substantive change is reviewed by
+Codex + AGY (Gemini/Antigravity) + OpenCode (MiniMax 2.7) before merge.
+Claude is the driver, so review is the <em>other three</em> voices. Enforced as an
+advisory git hook (overridable), not a hard block.</li>
+<li><strong>Build on top, stay bidirectional.</strong> We must always be able to <strong>PR back
+upstream</strong> <em>and</em> <strong>pull/merge upstream down</strong>. Therefore every addition is
+classified as exactly one of two kinds — nothing in between, because
+in-between edits break one or both directions of that flow:
+<ul>
+<li><strong>(a) Disconnected / modular</strong> — a pluggable module that does not modify
+the base. The base exposes (or we upstream) an extension point; our
+behaviour drops in as a plugin. <em>Exemplar: the Hoff's pluggable Telegram
+comms — swappable communications modules, base untouched.</em> This is the
+preferred kind.</li>
+<li><strong>(b) Supportable, justifiable upstream PR</strong> — a change to the base that
+cortextOS would plausibly accept: generic, tested, broadly useful. If we
+must touch the base, it has to be PR-worthy on its own merits.</li>
+<li><strong>Corollary — abstraction over hardcoding.</strong> Where we'd otherwise bake in
+Hoff-specific behaviour, contribute a <em>generic extension point</em> (kind b)
+and ship the Hoff-specifics as a plugin (kind a). First instance: theming
+— uplift cortextOS to <em>support</em> themes (PR-worthy), then ship hoff-ui as a
+theme plugin (modular).</li>
+<li>A <code>BACKPORT.md</code> ledger tags every addition (a) or (b), so divergence stays
+legible and the merge path never silently rots.</li>
+</ul>
+</li>
+<li><strong>Local-first ownership.</strong> Everything tracked in local git (<code>lab</code> Gitea is
+primary, <code>origin</code> GitHub secondary). <code>upstream</code> is a lifeline, not a master.
+&quot;This is mine for now.&quot;</li>
+<li><strong>Minimal-AI / cheapest-competent-worker.</strong> Mechanical jobs are done by the
+cheapest worker that can do them well, looking like an agent on the bus.
+Order of preference: (1) <strong>deterministic Node.js</strong> program; (2) a <strong>tiny
+local edge model</strong> (≤~1GB, mlx / GPU / CPU — the Hoff can train these, see
+<code>mlx-llm</code>) for jobs that are mechanical-but-fuzzy; (3) the frontier model
+peers, reserved for genuine generation and judgement. This is &quot;minimal-AI&quot;
+by <em>resource and cost</em>, not zero-AI dogma. <strong>HARD RULE: Node.js for
+everything we build</strong> — harness, workers, glue, scripts. Not Python/bash/bun
+for our own code. (Invoking third-party tools on other runtimes is fine.)</li>
+</ol>
+<h2 id="working-peers-vs-future-council" tabindex="-1"><a class="header-anchor" href="#working-peers-vs-future-council">Working peers vs future council</a></h2>
+<ul>
+<li><strong>Working peers (now):</strong> Claude (driver, here), Codex, AGY (Gemini), OpenCode
+(MiniMax 2.7). These are the live coding workers and reviewers.</li>
+<li><strong>Future council (later spec):</strong> local models on BC-250 inference workers +
+the L40S &quot;brain&quot;. Not online yet; out of v0 scope. The peer abstraction must
+not assume a model is remote/cloud, so local backends drop in later without
+rework.</li>
+</ul>
+<h2 id="step-0-%E2%80%94-opencode%2Fminimax-integration-spike-(do-first%2C-before-v0)" tabindex="-1"><a class="header-anchor" href="#step-0-%E2%80%94-opencode%2Fminimax-integration-spike-(do-first%2C-before-v0)">Step 0 — OpenCode/MiniMax integration spike (do FIRST, before v0)</a></h2>
+<p>Codex (<code>codex</code>) and AGY (<code>agy</code>) already have working CLIs and Claude-side
+skills. <strong>OpenCode/MiniMax 2.7 is the one unproven peer</strong> — <code>opencode</code> is
+installed (<code>~/.opencode/bin/opencode</code>) but its config is minimal, so the
+MiniMax 2.7 provider/model wiring is unvalidated. We de-risk it before
+committing the council architecture to it (empirical validation before scaling).</p>
+<p>Spike acceptance criteria:</p>
+<ol>
+<li><code>opencode</code> runs MiniMax 2.7 — provider/model configured in
+<code>~/.opencode/opencode.jsonc</code> (or project config), confirmed with a trivial
+prompt round-trip.</li>
+<li><strong>Non-interactive / headless invocation</strong> proven — driven from a Node/shell
+call (the way <code>codex</code>/<code>agy</code> are), returning output we can capture. This is
+the contract the future <code>opencode-pty.ts</code> adapter will implement.</li>
+<li><strong>Review mode</strong>: given a diff + a review prompt, it returns a usable verdict.</li>
+<li><strong>Worker mode</strong>: given a task in a scratch worktree, it makes a coherent edit.</li>
+</ol>
+<p>Output of Step 0: a short findings note + the invocation contract, feeding the
+<code>opencode-pty.ts</code> adapter design. If headless OpenCode proves unworkable, that
+changes the v0 design — hence it goes first.</p>
+<h2 id="architecture" tabindex="-1"><a class="header-anchor" href="#architecture">Architecture</a></h2>
+<h3 id="base-(inherited-from-cortextos%2C-unmodified-where-possible)" tabindex="-1"><a class="header-anchor" href="#base-(inherited-from-cortextos%2C-unmodified-where-possible)">Base (inherited from cortextOS, unmodified where possible)</a></h3>
+<ul>
+<li><code>src/pty/</code> — <code>agent-pty.ts</code> (base), <code>codex-pty.ts</code>, <code>hermes-pty.ts</code>. The
+multi-backend abstraction we extend.</li>
+<li><code>src/bus/</code>, <code>bus/*.sh</code> — Telegram, heartbeats, approvals, experiments, KB,
+tasks, cron. Reused as-is.</li>
+<li><code>src/cli/</code>, <code>src/daemon/</code>, <code>src/hooks/</code>, <code>src/telegram/</code> — runtime.</li>
+<li><code>dashboard/</code> — Next.js 14 dashboard.</li>
+<li><code>templates/</code>, <code>skills/</code>, <code>community/</code> — agent templates and skills.</li>
+<li>Stack: TypeScript strict, Node ≥20, tsup build, vitest tests, minimal deps.</li>
+</ul>
+<h3 id="overlays-(ours-%E2%80%94-additive%2C-back-portable)" tabindex="-1"><a class="header-anchor" href="#overlays-(ours-%E2%80%94-additive%2C-back-portable)">Overlays (ours — additive, back-portable)</a></h3>
+<ul>
+<li><strong>New PTY adapters</strong> as siblings to the existing ones:
+<ul>
+<li><code>src/pty/agy-pty.ts</code> — Antigravity / Gemini CLI backend.</li>
+<li><code>src/pty/opencode-pty.ts</code> — OpenCode harness fronting MiniMax 2.7.
+Both implement the same <code>agent-pty</code> interface; genuinely upstream-valuable,
+so they ship as clean candidate PRs.</li>
+</ul>
+</li>
+<li><strong><code>src/council/</code></strong> — peer orchestration:
+<ul>
+<li>A <strong>worker dispatcher</strong>: given a workstream + a chosen peer, spawn it in an
+isolated worktree (parallel coding workers, Law 1).</li>
+<li>A <strong>review fan-out</strong>: given a diff, run Codex + AGY + OpenCode in parallel,
+collect verdicts, aggregate to a pass/concerns summary (Law 2).</li>
+</ul>
+</li>
+<li><strong>Hoff-geared skills/prompts</strong> under <code>skills/</code> — additive, rebuilt for the
+Hoff's voice and workflow.</li>
+<li><strong>Theming/branding abstraction</strong> (Law 3 corollary) — uplift cortextOS so the
+dashboard and any rendered output read a <em>theme</em> (tokens + CSS) rather than
+hardcoded styles. Upstream-clean. The Hoff's theme ships as a separate bundle.</li>
+<li><strong>Scribe worker</strong> + theming uplift form the <strong>publishing &amp; branding
+sub-project</strong> (own spec, see below) — kept out of the v0 critical path.</li>
+</ul>
+<h3 id="enforcement-surface" tabindex="-1"><a class="header-anchor" href="#enforcement-surface">Enforcement surface</a></h3>
+<ul>
+<li><strong><code>CLAUDE.md</code></strong> (repo root) — the four laws, so every agent session inherits
+them. Co-exists with the inherited cortextOS contributor doc (renamed if it
+collides).</li>
+<li><strong><code>CONVENTIONS.md</code></strong> — fuller convention: overlay/back-port rules, worktree
+workflow, peer roster, review protocol.</li>
+<li><strong>Advisory git hook</strong> (<code>pre-push</code> or pre-merge) — runs the tri-model review,
+prints verdicts, allows override via a documented flag (e.g.
+<code>MYCORTEX_SKIP_REVIEW=1</code>). Fits rapid iteration; enforced, not handcuffed.</li>
+<li><strong><code>BACKPORT.md</code></strong> — ledger of upstream-clean vs mine-only commits.</li>
+</ul>
+<h2 id="data-%2F-control-flow" tabindex="-1"><a class="header-anchor" href="#data-%2F-control-flow">Data / control flow</a></h2>
+<h3 id="parallel-coding-workers-(law-1)" tabindex="-1"><a class="header-anchor" href="#parallel-coding-workers-(law-1)">Parallel coding workers (Law 1)</a></h3>
+<pre class="code"><code class="hljs">task ──▶ decompose into N independent workstreams
+            │
+            ├─ worktree A ─▶ peer (Claude|Codex|AGY|OpenCode)
+            ├─ worktree B ─▶ peer
+            └─ worktree C ─▶ peer
+            │
+            ▼
+       integrate / review
+</code></pre>
+<p>Each workstream is an isolated git worktree so peers never collide on files.</p>
+<h3 id="tri-model-review-gate-(law-2)" tabindex="-1"><a class="header-anchor" href="#tri-model-review-gate-(law-2)">Tri-model review gate (Law 2)</a></h3>
+<pre class="code"><code class="hljs">diff ──▶ council review fan-out (parallel)
+            ├─ Codex   ─▶ verdict
+            ├─ AGY     ─▶ verdict
+            └─ OpenCode─▶ verdict
+            ▼
+      aggregate ─▶ pass / concerns  ──▶ git hook surfaces, override possible
+</code></pre>
+<h2 id="repo-mechanic-%E2%80%94-adopt-the-fork%2C-merge-everything-(decided)" tabindex="-1"><a class="header-anchor" href="#repo-mechanic-%E2%80%94-adopt-the-fork%2C-merge-everything-(decided)">Repo mechanic — adopt the fork, merge everything (decided)</a></h2>
+<p>myCortex becomes the go-forward home of the Hoff's <code>thehoff/cortextos</code> fork,
+with all his work consolidated in. The Hoff's stated approach (the divergence is
+&quot;not that far ahead&quot;, so reconciliation is manageable):</p>
+<ol>
+<li><strong>Land the fork into Gitea.</strong> Push from <code>framework</code> (<code>~/GitHub/cortextos</code>,
+already on GitHub origin) into the Hoff's git → Gitea <code>lab</code> as the myCortex
+primary. (The bootstrap myCortex repo's <code>lab</code>/<code>origin</code> identity is kept;
+cortextOS history + content come in.)</li>
+<li><strong>Pull upstream main</strong> (<code>grandamenium/cortextos</code>) and merge — resolve the
+~28-commit gap. Keep <code>upstream</code> remote for ongoing bidirectional flow.</li>
+<li><strong>Merge in the <code>feat/*</code> branches</strong> one at a time, fixing as we go:
+connectors, branding/white-label, openai-runtime + <code>openai-compatible-pty</code>,
+then reconcile MCP against the (other contributor's) upstream MCP PR — prefer
+upstream, don't duplicate.</li>
+<li><strong>Rebrand</strong> <code>package.json</code> → <code>mycortex</code>; preserve cortextOS LICENSE +
+attribution (MIT). Add the repo-root <code>CLAUDE.md</code> (five laws) + <code>CONVENTIONS.md</code>
+<ul>
+<li><code>BACKPORT.md</code>.</li>
+</ul>
+</li>
+<li>Remotes end state: <code>lab</code> (Gitea, primary/mine) · <code>origin</code> (GitHub, mine) ·
+<code>upstream</code> (grandamenium, <strong>pull-only</strong>).</li>
+</ol>
+<p><strong>HARD GUARDRAIL — never push to upstream.</strong> <code>upstream</code> (grandamenium/cortextos)
+is fetch/pull only. We pull improvements down; we never push to it. &quot;Back-
+portable&quot; means <em>PR-ready in principle</em> — actually opening an upstream PR is a
+manual, Hoff-initiated action, never automated and never done by an agent.
+Local-first ownership (Law 4): the work stays mine.</p>
+<p>Each merged <code>feat/*</code> branch is tagged in <code>BACKPORT.md</code> as (a) modular or (b)
+upstream-PR-candidate, per Law 3 — the tag records <em>eligibility</em>, not intent to
+push.</p>
+<h2 id="error-handling-%2F-edge-cases" tabindex="-1"><a class="header-anchor" href="#error-handling-%2F-edge-cases">Error handling / edge cases</a></h2>
+<ul>
+<li><strong>Peer unavailable</strong> (CLI missing / not authed): the dispatcher and review
+fan-out degrade gracefully — skip the missing voice, record it, never hang.
+Review with &lt;3 voices is flagged in the summary, not silently passed.</li>
+<li><strong>Worktree collision / leftover:</strong> worktrees are named per workstream and
+cleaned on completion; stale worktrees are detectable and prunable.</li>
+<li><strong>Hook override:</strong> every skipped review is logged so the BACKPORT/audit trail
+shows where the gate was bypassed.</li>
+</ul>
+<h2 id="testing" tabindex="-1"><a class="header-anchor" href="#testing">Testing</a></h2>
+<ul>
+<li>Follow cortextOS's vitest pattern; add unit tests for new code in <code>tests/</code>.</li>
+<li>New PTY adapters: unit-test the adapter contract against the <code>agent-pty</code>
+interface (mock the child process).</li>
+<li>Council dispatcher / review fan-out: unit-test aggregation logic and the
+graceful-degradation paths with mocked peers.</li>
+<li><code>npm run build</code> (tsc clean) + <code>npm test</code> green before any merge — same bar as
+upstream.</li>
+</ul>
+<h2 id="publishing-%26-branding-sub-project-(own-spec-%E2%80%94-after-v0)" tabindex="-1"><a class="header-anchor" href="#publishing-%26-branding-sub-project-(own-spec-%E2%80%94-after-v0)">Publishing &amp; branding sub-project (own spec — after v0)</a></h2>
+<p>A coherent, mostly-deterministic layer. Decomposed out of v0 so it gets its own
+spec → plan → build cycle, but captured here so the seams are reserved.</p>
+<h3 id="theming-uplift-to-cortextos-(law-3-corollary)" tabindex="-1"><a class="header-anchor" href="#theming-uplift-to-cortextos-(law-3-corollary)">Theming uplift to cortextOS (Law 3 corollary)</a></h3>
+<p>Contribute a generic theming layer upstream: the dashboard (and rendered HTML
+output) load a theme — a set of CSS custom properties + fonts + two palettes —
+instead of hardcoded styles. Themes are vendored, no CDN (matches hoff-ui's own
+rule). Default theme stays cortextOS's; the Hoff's theme is an add-on bundle.
+This is the back-portable contribution; our brand is the overlay on top.</p>
+<h3 id="the-scribe-worker-(deterministic-md%E2%86%92html-publisher)" tabindex="-1"><a class="header-anchor" href="#the-scribe-worker-(deterministic-md%E2%86%92html-publisher)">The Scribe worker (deterministic md→HTML publisher)</a></h3>
+<p>A plain Node.js worker (Law 5 — no AI) that <em>looks like</em> an agent on the bus.</p>
+<ul>
+<li><strong>Input:</strong> bus jobs (e.g. <code>publish</code>/<code>render</code>) and/or a watched markdown source
+tree (chokidar — already a cortextOS dep).</li>
+<li><strong>Job:</strong> convert markdown → branded HTML in the Hoff's house style, aligned to
+<strong>hoff-ui / hoff-docs / askew-docs</strong> branding. Mermaid pre-rendered, tables,
+code highlight, no em-dashes, Australian English (matches the narrative-docs
+house style the Hoff already uses).</li>
+<li><strong>Two served roots:</strong>
+<ul>
+<li><code>/documentation/</code> — readable HTML of reports, notes, specs, data. Uses the
+<strong>narrative</strong> theme (consumption).</li>
+<li><code>/dashboard/</code> — operational views / status. Uses the <strong>dashboard</strong> theme
+(operation). Reconcile with the inherited Next.js dashboard during this
+sub-project's spec: the Scribe may render a lightweight static dashboard, or
+feed the Next.js one — decided then, not now.</li>
+</ul>
+</li>
+<li><strong>Serving:</strong> a small static HTTP server (minimal deps, in keeping with
+cortextOS).</li>
+<li><strong>Rendering uses the theming abstraction above</strong> — so the worker is brand-
+agnostic and the Hoff brand is just the active theme.</li>
+<li><strong>Law 5 pilot.</strong> Baseline is a pure deterministic renderer (tier 1). The
+Scribe is also the natural pilot for a <strong>tiny local edge model</strong> (tier 2,
+≤~1GB, mlx/CPU/GPU) on the fuzzier &quot;HTML management&quot; judgement — layout
+choices, summarising a report, picking the right theme/section treatment.
+Build deterministic first, measure, then trial the tiny model only where the
+deterministic path is genuinely awkward. Frontier peers are never in this loop.</li>
+</ul>
+<p>Maps onto hoff-ui directly: narrative palette (pink/purple/green) for docs,
+dashboard palette (mint/cyan/amber) for ops; Geist + JetBrains Mono + Caveat;
+1200px / 760px wraps; tokens from <code>hoff-ui/tokens/</code>.</p>
+<h2 id="out-of-scope-(later-specs)" tabindex="-1"><a class="header-anchor" href="#out-of-scope-(later-specs)">Out of scope (later specs)</a></h2>
+<ul>
+<li>Local council backends (BC-250 / L40S models).</li>
+<li>RAG / per-repo retrieval integration (<code>myRAG</code>, <code>toolrag</code>).</li>
+<li>Dashboard rebrand and council telemetry views.</li>
+<li><strong>Workflow visualiser</strong> (see below).</li>
+<li>Synthetic-data / LoRA training loop.</li>
+</ul>
+<h3 id="workflow-visualiser-(captured-requirement%2C-later-spec)" tabindex="-1"><a class="header-anchor" href="#workflow-visualiser-(captured-requirement%2C-later-spec)">Workflow visualiser (captured requirement, later spec)</a></h3>
+<p>The Hoff wants to <em>see</em> agents move through workflow stages — for both the
+council and ordinary task pipelines. Reference: the &quot;AIOS Pipeline&quot; board —
+a horizontal staged DAG (e.g. Capture → Classify → Rules → Action → Process →
+Deliver), each stage a column of node cards carrying live status badges, with
+edges flowing left-to-right between stages, rendered in the hoff-ui theme
+(dark, pink/purple). Built on the inherited Next.js 14 dashboard.</p>
+<p>Design seam to keep open now so this lands cleanly later: the council
+dispatcher and review fan-out must <strong>emit structured stage/transition events</strong>
+(node id, stage, status, timestamps) — not just return final results — so the
+visualiser can subscribe to a live event stream rather than being bolted on.
+v0 does not build the UI, but its events are shaped with this consumer in mind.</p>
+<h2 id="roadmap-%2F-sequencing" tabindex="-1"><a class="header-anchor" href="#roadmap-%2F-sequencing">Roadmap / sequencing</a></h2>
+<ol start="0">
+<li><strong>Step 0 — OpenCode/MiniMax spike</strong> (de-risk the unproven peer). FIRST.</li>
+<li><strong>v0 — Foundation:</strong> fork import + five laws documented/enforced +
+council-review gate + parallel-workstreams standard.</li>
+<li><strong>Publishing &amp; branding sub-project:</strong> theming uplift + Scribe worker +
+<code>/documentation/</code> &amp; <code>/dashboard/</code> in the Hoff brand.</li>
+<li>Local council backends (drop into the peer abstraction).</li>
+<li>RAG retrieval as a peer tool.</li>
+<li>Dashboard rebrand + council telemetry.</li>
+<li>Workflow visualiser (staged DAG board over the dispatcher event stream).</li>
+</ol>
+</main>
+</div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if(window.mermaid){window.mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose'});}</script>
+</body>
+</html>
