@@ -4,8 +4,11 @@
 // Claude is the driver/synthesiser, so it is not a peer here.
 import { spawn } from "node:child_process";
 
-/** Spawn a command, feed the prompt as an argv element, capture stdout. */
-function exec(cmd, args, { cwd, timeoutMs = 300000 } = {}) {
+/** Spawn a command, feed the prompt as an argv element, capture stdout.
+ * Default 10-min floor — the council CLIs (codex/agy/opencode) are slow agentic
+ * harnesses; per-agent `timeoutMs` (PEER_DEFS) overrides this. Do NOT shrink to
+ * "make it fast" — slowness is not a reason to swap in cheaper models. */
+function exec(cmd, args, { cwd, timeoutMs = 600000 } = {}) {
   return new Promise((resolve) => {
     let out = "", err = "", done = false;
     let child;
@@ -28,16 +31,20 @@ export const PEER_DEFS = {
   codex: {
     id: "codex",
     model: "gpt-5.4-mini",
+    timeoutMs: 600000,   // 10 min — codex exec deep reasoning is slow
     build: (prompt) => ["codex", ["exec", "--skip-git-repo-check", prompt]],
   },
   agy: {
     id: "agy",
     model: "gemini (antigravity)",
-    build: (prompt) => ["agy", ["-p", prompt]],
+    timeoutMs: 600000,   // 10 min outer kill
+    // agy's own --print-timeout defaults to 5m and would self-abort first; raise it to match.
+    build: (prompt) => ["agy", ["--print-timeout", "10m", "-p", prompt]],
   },
   opencode: {
     id: "opencode",
     model: "minimax/MiniMax-M2.7",
+    timeoutMs: 900000,   // 15 min — opencode `plan` agent spawns explore subagents; slowest
     build: (prompt) => ["opencode", ["run", "--agent", "plan", "-m", "minimax/MiniMax-M2.7", prompt]],
   },
 };
@@ -56,7 +63,9 @@ export function makeOpenAIPeer(def) {
     model: def.model,
     role: def.role,
     kind: "openai",
-    async run(userPrompt, { timeoutMs = 120000 } = {}) {
+    timeoutMs: def.timeoutMs,
+    async run(userPrompt, opts = {}) {
+      const timeoutMs = opts.timeoutMs ?? def.timeoutMs ?? 180000;
       if (!def.baseUrl) return { ok: false, error: "no baseUrl", text: "" };
       const apiKey = def.apiKeyEnv ? process.env[def.apiKeyEnv] : def.apiKey || "";
       const messages = [];
@@ -91,9 +100,10 @@ export function makePeer(def) {
     id: def.id,
     model: def.model,
     kind: "cli",
+    timeoutMs: def.timeoutMs,
     async run(prompt, opts = {}) {
       const [cmd, args] = def.build(prompt);
-      return exec(cmd, args, opts);
+      return exec(cmd, args, { cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? def.timeoutMs });
     },
   };
 }

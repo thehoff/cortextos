@@ -8,15 +8,20 @@ This is the manual tri-model panel — codified, repeatable, one call.
 Standalone now (shells out to the peer CLIs; no cortextOS daemon needed).
 Modular (Law 3a) — designed to wrap as a cortextOS bus worker later.
 
-## Peers (the council voices)
+## THE COUNCIL (exactly three — never substitute)
 
-| id | model | invocation |
-|---|---|---|
-| `codex` | gpt-5.4-mini | `codex exec --skip-git-repo-check` |
-| `agy` | Gemini (Antigravity) | `agy -p` |
-| `opencode` | MiniMax M2.7 | `opencode run --agent plan -m minimax/MiniMax-M2.7` |
+| id | model | invocation | timeout |
+|---|---|---|---|
+| `codex` | gpt-5.4-mini | `codex exec --skip-git-repo-check` | 10 min |
+| `agy` | Gemini (Antigravity) | `agy --print-timeout 10m -p` | 10 min |
+| `opencode` | MiniMax M2.7 | `opencode run --agent plan -m minimax/MiniMax-M2.7` | 15 min |
 
-Claude is the driver/synthesiser, not a peer. (Law 2: review = the *other* voices.)
+These three (`role:council` in `agents.json`) ARE the council; `council review`
+defaults to them. **Do NOT substitute OpenRouter or any other stand-in** — the
+CLIs are slow agentic harnesses, so they get long per-agent timeouts (above);
+slowness is not a reason to swap in cheaper models. Claude is the
+driver/synthesiser, not a peer (Law 2: review = the *other* voices). The nyx/brain
+models (`role:council-local`) are the FUTURE local council, disabled until online.
 
 ## Use
 

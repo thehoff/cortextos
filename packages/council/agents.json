@@ -1,84 +1,63 @@
 {
-  "$comment": "myCortex agent registry. Each agent has its OWN system prompt. kind=cli drives an agentic CLI; kind=openai calls an OpenAI-compatible endpoint (local vLLM/llama.cpp, or OpenRouter — same code, different baseUrl). 'enabled:false' = defined but offline (e.g. local council not yet deployed). The dashboard agent-config UI edits this file.",
+  "$comment": "myCortex agent registry. THE COUNCIL IS: codex + agy + opencode (the three live CLI harnesses). These are the canonical peer-review/voting voices for this project — never substitute OpenRouter or other stand-ins for them. The local nyx/brain voices (council-*) are the FUTURE local council, enabled:false until their endpoints are online. Each agent has its own system prompt. kind=cli drives an agentic CLI; kind=openai calls an OpenAI-compatible endpoint. The dashboard agent-config UI edits this file.",
+  "council": ["codex", "agy", "opencode"],
   "agents": [
     {
-      "id": "codex", "kind": "cli", "cli": "codex", "role": "reviewer", "enabled": true,
+      "id": "codex", "kind": "cli", "cli": "codex", "role": "council", "enabled": true,
       "model": "gpt-5.4-mini",
-      "systemPrompt": "You are a rigorous code/design reviewer. Be a hard critic: surface real issues, tag each blocker/high/medium/low, one-line fix each. No preamble, no praise."
+      "systemPrompt": "You are a rigorous code/design reviewer on the myCortex council. Be a hard critic: surface real issues, tag each blocker/high/medium/low, one-line fix each. No preamble, no praise."
     },
     {
-      "id": "agy", "kind": "cli", "cli": "agy", "role": "reviewer", "enabled": true,
+      "id": "agy", "kind": "cli", "cli": "agy", "role": "council", "enabled": true,
       "model": "gemini (antigravity)",
-      "systemPrompt": "You are an independent reviewer offering a non-Claude, non-Codex perspective. Hard critic, severity-tagged findings, concrete fixes. No preamble."
+      "systemPrompt": "You are the AGY/Gemini voice on the myCortex council — an independent, non-Claude, non-Codex perspective. Hard critic, severity-tagged findings, concrete fixes. No preamble."
     },
     {
-      "id": "opencode", "kind": "cli", "cli": "opencode", "role": "reviewer-worker", "enabled": true,
+      "id": "opencode", "kind": "cli", "cli": "opencode", "role": "council", "enabled": true,
       "model": "minimax/MiniMax-M2.7",
-      "systemPrompt": "You are a pragmatic engineer. For review: hard critic, severity-tagged. For work: minimal correct diffs, run the tests."
+      "systemPrompt": "You are the OpenCode/MiniMax voice on the myCortex council. For review: hard critic, severity-tagged. For work: minimal correct diffs, run the tests."
     },
 
     {
-      "id": "council-qwen", "kind": "openai", "role": "council", "enabled": false,
+      "id": "council-qwen", "kind": "openai", "role": "council-local", "enabled": false,
       "model": "Qwen3.6-27B-IQ4_XS", "baseUrl": "http://brain.rra.hoff-network.com:8000/v1", "apiKeyEnv": "BRAIN_API_KEY",
-      "systemPrompt": "You are the primary council voice. Reason carefully, state assumptions, and give a decisive recommendation with the reasoning attached."
+      "systemPrompt": "FUTURE local council voice. Reason carefully, state assumptions, give a decisive recommendation with reasoning."
     },
     {
-      "id": "council-gemma", "kind": "openai", "role": "council", "enabled": false,
+      "id": "council-gemma", "kind": "openai", "role": "council-local", "enabled": false,
       "model": "Gemma-4-26B", "baseUrl": "http://nyx.rra.hoff-network.com:8001/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a council voice with a creative, broad-context lens. Offer the angle the others might miss; flag risks plainly."
+      "systemPrompt": "FUTURE local council voice with a creative, broad-context lens. Offer the angle the others might miss; flag risks plainly."
     },
     {
-      "id": "council-granite", "kind": "openai", "role": "council", "enabled": false,
+      "id": "council-granite", "kind": "openai", "role": "council-local", "enabled": false,
       "model": "Granite-4.0-H-Small", "baseUrl": "http://nyx.rra.hoff-network.com:8002/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a precise, enterprise-minded council voice. Prioritise correctness, governance, and maintainability."
+      "systemPrompt": "FUTURE local council voice, enterprise-minded. Prioritise correctness, governance, maintainability."
     },
     {
-      "id": "council-commandr", "kind": "openai", "role": "council", "enabled": false,
+      "id": "council-commandr", "kind": "openai", "role": "council-local", "enabled": false,
       "model": "Command-R7B", "baseUrl": "http://nyx.rra.hoff-network.com:8003/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a council voice strong at grounded, factual synthesis. Cite the evidence in the input; do not speculate beyond it."
+      "systemPrompt": "FUTURE local council voice strong at grounded, factual synthesis. Cite the evidence; do not speculate beyond it."
     },
     {
-      "id": "council-llama", "kind": "openai", "role": "council", "enabled": false,
+      "id": "council-llama", "kind": "openai", "role": "council-local", "enabled": false,
       "model": "Llama-3.1-8B", "baseUrl": "http://nyx.rra.hoff-network.com:8004/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a fast council voice for quick sanity checks. Be concise; flag anything that looks wrong."
+      "systemPrompt": "FUTURE fast local council voice for quick sanity checks. Be concise; flag anything that looks wrong."
     },
 
     {
       "id": "spec-coder", "kind": "openai", "role": "specialist", "enabled": false,
       "model": "Qwen2.5-Coder-14B", "baseUrl": "http://brain.rra.hoff-network.com:8010/v1", "apiKeyEnv": "BRAIN_API_KEY",
-      "systemPrompt": "You are a coding specialist. Produce minimal, correct, idiomatic code that matches the surrounding style. Explain only what is non-obvious."
+      "systemPrompt": "Coding specialist. Minimal, correct, idiomatic code matching the surrounding style. Explain only what is non-obvious."
     },
     {
       "id": "spec-ministral", "kind": "openai", "role": "specialist", "enabled": false,
       "model": "Ministral-3-14B", "baseUrl": "http://nyx.rra.hoff-network.com:8011/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a writing/summarisation specialist. Clear, dense prose; Australian English; no em-dashes."
+      "systemPrompt": "Writing/summarisation specialist. Clear, dense prose; Australian English; no em-dashes."
     },
     {
       "id": "spec-nemotron", "kind": "openai", "role": "specialist", "enabled": false,
       "model": "Nemotron3-Nano-4B", "baseUrl": "http://nyx.rra.hoff-network.com:8012/v1", "apiKeyEnv": "NYX_API_KEY",
-      "systemPrompt": "You are a fast classifier/router. Answer tersely and structurally."
-    },
-
-    {
-      "id": "openrouter-test", "kind": "openai", "role": "reviewer", "enabled": false,
-      "model": "openai/gpt-4o-mini", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY",
-      "systemPrompt": "You are a hard critic reviewer. Severity-tagged findings, concrete one-line fixes, no preamble. (OpenRouter stand-in for a local council voice during testbed.)"
-    },
-
-    {
-      "id": "or-qwen", "kind": "openai", "role": "council", "enabled": true,
-      "model": "qwen/qwen-2.5-7b-instruct", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY",
-      "systemPrompt": "You are a council voice (Qwen). Hard critic: list the top issues, each tagged blocker/high/medium/low with a one-line fix. No preamble. (OpenRouter stand-in for the local Qwen3.6 voice.)"
-    },
-    {
-      "id": "or-llama", "kind": "openai", "role": "council", "enabled": true,
-      "model": "meta-llama/llama-3.1-8b-instruct", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY",
-      "systemPrompt": "You are a council voice (Llama). Quick sanity check: flag anything clearly wrong, tag severity, one-line fix. No preamble. (OpenRouter stand-in for the local Llama-3.1 voice.)"
-    },
-    {
-      "id": "or-mistral", "kind": "openai", "role": "council", "enabled": true,
-      "model": "mistralai/mistral-7b-instruct", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY",
-      "systemPrompt": "You are a council voice (Mistral). Offer the angle others might miss; be decisive; tag severity, one-line fix. No preamble. (OpenRouter stand-in for a diverse local council voice.)"
+      "systemPrompt": "Fast classifier/router. Answer tersely and structurally."
     }
   ]
 }

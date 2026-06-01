@@ -48,16 +48,20 @@ if (has("diff")) {
   label = path;
 }
 
-// Peer selection: explicit CLI peers (--peers), registry agent ids (--agents),
-// or a registry role (--role); default = enabled reviewers from the registry.
+// Peer selection. DEFAULT = THE COUNCIL: codex + agy + opencode (enabled,
+// role=council). Never substitute OpenRouter/other stand-ins for the council.
+// --agents <ids> for explicit picks; --role <role> for a registry role; --peers
+// for raw CLI peers; --cortext to dispatch to canonical cortextOS agents.
 let peers;
 if (has("cortext")) peers = loadCortextAgents(opt("cortext", join(process.env.HOME || ".", ".cortextos", "orgs")));
 else if (has("agents")) peers = resolveAgents({ ids: opt("agents", "").split(",").map((s) => s.trim()).filter(Boolean) });
-else if (has("role")) peers = resolveAgents({ filter: { role: opt("role", "reviewer"), enabled: true } });
+else if (has("role")) peers = resolveAgents({ filter: { role: opt("role", "council"), enabled: true } });
 else if (has("peers")) peers = resolvePeers(opt("peers", "").split(",").map((s) => s.trim()).filter(Boolean));
-else peers = resolveAgents({ filter: { enabled: true } }).filter((p) => (p.role || "").includes("review"));
+else peers = resolveAgents({ filter: { role: "council", enabled: true } }); // THE council: codex+agy+opencode
 const instruction = opt("instruction", undefined);
-const timeoutMs = Number(opt("timeout", "300000"));
+// Optional global override; default undefined → each peer uses its own timeout
+// (PEER_DEFS: codex/agy 10m, opencode 15m). Don't force a short global cap.
+const timeoutMs = has("timeout") ? Number(opt("timeout")) : undefined;
 
 console.error(`council: dispatching "${label}" to ${peers.map((p) => p.id).join(", ")} …`);
 const t0 = Date.now();
