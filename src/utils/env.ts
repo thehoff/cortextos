@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, writeFileSync } from 'fs';
-import { join, basename, resolve as resolvePath, sep } from 'path';
+import { join, basename, resolve as resolvePath, sep, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 import type { CtxEnv } from '../types/index.js';
 import { ensureDir } from './atomic.js';
@@ -96,7 +96,11 @@ export function resolveEnv(overrides?: Partial<CtxEnv>): CtxEnv {
   if (agentDir && frameworkRoot) {
     const fwRootResolved = resolvePath(frameworkRoot);
     const agentDirResolved = resolvePath(agentDir);
-    if (agentDirResolved !== fwRootResolved && !agentDirResolved.startsWith(fwRootResolved + sep)) {
+    // path.relative returns '..' if agentDir is not under fwRoot, and returns an absolute
+    // path on Windows when drive letters differ. isAbsolute(rel) also catches the edge case
+    // where fwRoot='/' (the separator-concat produces '//' which never matches a segment).
+    const rel = relative(fwRootResolved, agentDirResolved);
+    if (agentDirResolved !== fwRootResolved && (rel.startsWith('..') || isAbsolute(rel))) {
       throw new Error(
         `Resolved CTX_AGENT_DIR '${agentDir}' is not under CTX_FRAMEWORK_ROOT '${frameworkRoot}'. ` +
         `This indicates a sandbox/live environment leak — likely CTX_FRAMEWORK_ROOT was overridden ` +

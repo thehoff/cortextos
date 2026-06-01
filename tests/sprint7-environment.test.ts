@@ -227,5 +227,46 @@ describe('Sprint 7: Environment & Config Completeness', () => {
       expect(result.projectRoot).toBe(root);
       expect(result.agentDir).toBe(join(root, 'orgs', 'testorg', 'agents', 'test-agent'));
     });
+
+    // issue #527: fwRoot='/' edge case — path.relative-based containment guard
+    it('TC-E fwRoot=root: agentDir=/tmp/agent is subordinate and must not throw', () => {
+      expect(() => resolveEnv({
+        frameworkRoot: '/',
+        agentDir: '/tmp/agent',
+        agentName: 'foo',
+      })).not.toThrow();
+    });
+
+    it('TC-F segment-aware: /opt/fw + /opt/fw/agents/a is subordinate and must not throw', () => {
+      expect(() => resolveEnv({
+        frameworkRoot: '/opt/fw',
+        agentDir: '/opt/fw/agents/a',
+        agentName: 'foo',
+      })).not.toThrow();
+    });
+
+    it('TC-G segment-aware: /opt/fw + /opt/other is NOT subordinate and must throw', () => {
+      expect(() => resolveEnv({
+        frameworkRoot: '/opt/fw',
+        agentDir: '/opt/other',
+        agentName: 'foo',
+      })).toThrow(/not under CTX_FRAMEWORK_ROOT/);
+    });
+
+    it('TC-H equality: frameworkRoot equals agentDir must not throw', () => {
+      expect(() => resolveEnv({
+        frameworkRoot: '/opt/fw',
+        agentDir: '/opt/fw',
+        agentName: 'foo',
+      })).not.toThrow();
+    });
+
+    it('TC-I prefix-but-not-segment: /opt/fwx/agent is NOT subordinate to /opt/fw and must throw', () => {
+      expect(() => resolveEnv({
+        frameworkRoot: '/opt/fw',
+        agentDir: '/opt/fwx/agent',
+        agentName: 'foo',
+      })).toThrow(/not under CTX_FRAMEWORK_ROOT/);
+    });
   });
 });
