@@ -113,8 +113,68 @@ export function cronExpressionMinIntervalMs(expr: string): number {
   const everyHour = /^\*\/(\d+)$/.exec(hour);
   if (everyHour) return parseInt(everyHour[1], 10) * 3_600_000;
 
-  // Fixed hour — fires daily (or on restricted days; 24h is the minimum gap)
-  if (/^\d+$/.test(hour)) return 24 * 3_600_000;
+  // Fixed hour — fires daily, weekly, or monthly depending on DOW/DOM restrictions
+  if (/^\d+$/.test(hour)) {
+    const dow = parts[4];
+    const dom = parts[2];
+
+    /*
+     * AND-semantics note (src/daemon/cron-scheduler.ts nextFireFromCron):
+     * ALL five fields (months && doms && dows && hours && minutes) must match
+     * for a fire. When both DOM and DOW are restricted, the cron fires at
+     * most as often as the RARER field — conservative estimate is monthly
+     * (28d), since a 1st-of-month-Monday can fire 4–5 times per month but
+     * never more than once per month.
+     *
+     * Lists/ranges/steps are approximated as 24h (daily-ish on active days).
+     * This is conservative because a too-short estimate only causes gap-nudges
+     * to fire slightly early, never late — the agent will not miss a fire.
+     * (Single-value fields use true minimums: 7d for DOW, 28d for DOM.)
+     */
+
+    const dowRestricted = dow !== '*';
+    const domRestricted = dom !== '*';
+
+    if (dowRestricted && domRestricted) {
+      // AND semantics: both DOM and DOW restrict the schedule.
+      // ALL fields must match, so the effective minimum interval is the
+      // RARER of the two constraints. Conservative floor is monthly (28d).
+      // Out-of-range single values → invalid expression → FALLBACK_MS.
+      const singleDow = /^\d+$/.exec(dow);
+      const singleDom = /^\d+$/.exec(dom);
+      if (singleDow) {
+        const dowVal = parseInt(singleDow[0], 10);
+        if (dowVal < 0 || dowVal > 6) return FALLBACK_MS;
+      }
+      if (singleDom) {
+        const domVal = parseInt(singleDom[0], 10);
+        if (domVal < 1 || domVal > 31) return FALLBACK_MS;
+      }
+      return 28 * 24 * 3_600_000;
+    }
+
+    if (dowRestricted) {
+      const singleDow = /^\d+$/.exec(dow);
+      if (singleDow) {
+        const v = parseInt(singleDow[0], 10);
+        if (v < 0 || v > 6) return FALLBACK_MS;
+        return 7 * 24 * 3_600_000;
+      }
+      return 24 * 3_600_000;
+    }
+
+    if (domRestricted) {
+      const singleDom = /^\d+$/.exec(dom);
+      if (singleDom) {
+        const v = parseInt(singleDom[0], 10);
+        if (v < 1 || v > 31) return FALLBACK_MS;
+        return 28 * 24 * 3_600_000;
+      }
+      return 24 * 3_600_000;
+    }
+
+    return 24 * 3_600_000;
+  }
 
   return FALLBACK_MS;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { updateCronFire, readCronState, parseDurationMs } from '../../../src/bus/cron-state';
+import { updateCronFire, readCronState, parseDurationMs, cronExpressionMinIntervalMs } from '../../../src/bus/cron-state';
 
 let tmpDir: string;
 
@@ -44,6 +44,70 @@ describe('parseDurationMs', () => {
   it('returns NaN for unknown unit', () => {
     expect(parseDurationMs('5y')).toBeNaN();
     expect(parseDurationMs('10s')).toBeNaN();
+  });
+});
+
+describe('cronExpressionMinIntervalMs', () => {
+  it('returns 24h for daily fixed-hour cron', () => {
+    expect(cronExpressionMinIntervalMs('0 9 * * *')).toBe(24 * 3_600_000);
+  });
+
+  it('returns 7d for single-value DOW (weekly)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 * * 1')).toBe(7 * 24 * 3_600_000);
+  });
+
+  it('returns 28d for single-value DOM (monthly)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 1 * *')).toBe(28 * 24 * 3_600_000);
+  });
+
+  it('returns 24h for range DOW (e.g. weekdays)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 * * 1-5')).toBe(24 * 3_600_000);
+  });
+
+  it('returns 28d for combined DOM+DOW when DOW is range (AND semantics)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 1 * 1-5')).toBe(28 * 24 * 3_600_000);
+  });
+
+  it('returns 28d for combined DOM+DOW when DOM is range (AND semantics)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 1-5 * 1')).toBe(28 * 24 * 3_600_000);
+  });
+
+  it('returns 28d when both DOM and DOW are single-value (AND semantics)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 1 * 1')).toBe(28 * 24 * 3_600_000);
+  });
+
+  it('returns 24h for range DOM and no DOW restriction', () => {
+    expect(cronExpressionMinIntervalMs('0 9 1-15 * *')).toBe(24 * 3_600_000);
+  });
+
+  it('returns 15min for */15 minute expression', () => {
+    expect(cronExpressionMinIntervalMs('*/15 * * * *')).toBe(15 * 60_000);
+  });
+
+  it('returns 6h for every-N-hours expression', () => {
+    expect(cronExpressionMinIntervalMs('0 */6 * * *')).toBe(6 * 3_600_000);
+  });
+
+  it('returns 48h fallback for out-of-range DOW (7)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 * * 7')).toBe(48 * 3_600_000);
+  });
+
+  it('returns 48h fallback for out-of-range DOM (0)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 0 * *')).toBe(48 * 3_600_000);
+  });
+
+  it('returns 48h fallback for out-of-range DOM (32)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 32 * *')).toBe(48 * 3_600_000);
+  });
+
+  // Steps/lists/ranges are conservative 24h — a too-short interval only makes
+  // gap-nudges fire slightly early (never late), so the agent never misses a fire.
+  it('returns 24h for step in DOW (e.g. */2)', () => {
+    expect(cronExpressionMinIntervalMs('0 9 * * */2')).toBe(24 * 3_600_000);
+  });
+
+  it('returns 48h fallback for malformed expression', () => {
+    expect(cronExpressionMinIntervalMs('bad')).toBe(48 * 3_600_000);
   });
 });
 
