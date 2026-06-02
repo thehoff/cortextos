@@ -8,6 +8,43 @@ import { db } from './db';
 import { checkRateLimit, resetRateLimit } from './rate-limit';
 import type { User } from './types';
 
+// Lab/LAN deployments serve over plain HTTP on a trusted network — browsers refuse
+// to send Secure-flagged cookies over non-localhost HTTP origins, so the session
+// cookie never sticks and login loops back to /login (#144 LAN variant).
+// ALLOW_HTTP_COOKIES=true opts out of the Secure flag for trusted-LAN HTTP serving;
+// default behaviour (production = Secure) is unchanged.
+//
+// Exported so the auth-config test binds to this exact expression rather than a
+// duplicated copy (prevents test/source drift — council finding).
+export function resolveSecureCookies(
+  env: { NODE_ENV?: string; ALLOW_HTTP_COOKIES?: string } = process.env,
+): boolean {
+  return env.NODE_ENV === 'production' && env.ALLOW_HTTP_COOKIES !== 'true';
+}
+
+// Evaluated once at module load: NextAuth reads the cookie config at startup, not
+// per-request, so the flag only needs resolving here.
+const secureCookies = resolveSecureCookies();
+
+// Defence-in-depth: ALLOW_HTTP_COOKIES disables the Secure flag on session/CSRF
+// cookies, which is only safe on a trusted network. Returns the boot warning to
+// surface (or null) so a stray env value on a real deployment is visible in the
+// logs — exported so the warn path is itself testable (council finding).
+export function insecureCookieWarning(
+  env: { NODE_ENV?: string; ALLOW_HTTP_COOKIES?: string } = process.env,
+): string | null {
+  if (env.NODE_ENV === 'production' && env.ALLOW_HTTP_COOKIES === 'true') {
+    return (
+      '[auth] ALLOW_HTTP_COOKIES=true — Secure flag DISABLED on auth cookies. ' +
+      'Only use this for plain-HTTP serving on a trusted LAN; never on an internet-facing deployment.'
+    );
+  }
+  return null;
+}
+
+const bootWarning = insecureCookieWarning();
+if (bootWarning) console.warn(bootWarning);
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   // Force simple cookie names without __Secure- / __Host- prefixes.
@@ -18,27 +55,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   cookies: {
     sessionToken: {
       name: 'authjs.session-token',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: secureCookies },
     },
     csrfToken: {
       name: 'authjs.csrf-token',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: secureCookies },
     },
     callbackUrl: {
       name: 'authjs.callback-url',
-      options: { sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { sameSite: 'lax', path: '/', secure: secureCookies },
     },
     pkceCodeVerifier: {
       name: 'authjs.pkce.code_verifier',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: secureCookies },
     },
     state: {
       name: 'authjs.state',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: secureCookies },
     },
     nonce: {
       name: 'authjs.nonce',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: secureCookies },
     },
   },
   providers: [
