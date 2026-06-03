@@ -196,16 +196,29 @@ export function serializeIdentityMd(
 
 // ---------------------------------------------------------------------------
 // SOUL.md
+//
+// SOUL.md ships in two heading shapes and the parser must round-trip BOTH:
+//
+//   (a) Explicit shape — one heading per field:
+//         ## Autonomy Rules / ## Communication Style
+//         ## Day Mode / ## Night Mode / ## Core Truths
+//
+//   (b) Template shape (what every templates/* SOUL.md actually uses):
+//         ## Autonomy Rules
+//         ## Day/Night Mode   <- combined, with bold sub-lines:
+//             **Day Mode (...):** ...prose...
+//             **Night Mode (...):** ...prose...
+//         ## Communication     <- not "Communication Style"
+//       and NO Core Truths section at all.
+//
+// The parser adapts to the templates; the templates are never modified
+// (agents in the field already have them). Day/Night prose is captured WITH
+// its bold label so the embedded time range / {{day_mode_start}} survives a
+// round-trip, and so the combined section is updated IN PLACE on save rather
+// than spawning orphan duplicate headings.
 // ---------------------------------------------------------------------------
 
-const SOUL_MAP: Record<string, string> = {
-  autonomyRules: 'Autonomy Rules',
-  communicationStyle: 'Communication Style',
-  dayMode: 'Day Mode',
-  nightMode: 'Night Mode',
-  coreTruths: 'Core Truths',
-};
-
+// Heading text -> SoulFields key. Synonyms collapse to one canonical field.
 const SOUL_HEADINGS: Record<string, string> = {
   autonomy: 'autonomyRules',
   'autonomy rules': 'autonomyRules',
@@ -215,6 +228,75 @@ const SOUL_HEADINGS: Record<string, string> = {
   'night mode': 'nightMode',
   'core truths': 'coreTruths',
 };
+
+// Combined heading variants that carry BOTH dayMode and nightMode as bold
+// sub-lines inside a single section.
+const COMBINED_DAYNIGHT_HEADINGS = new Set(['day/night mode', 'day / night mode']);
+
+/**
+ * Extract the Day Mode / Night Mode bold sub-blocks from a combined
+ * "Day/Night Mode" section's content.
+ *
+ * A sub-block is the line beginning `**Day Mode` (resp. `**Night Mode`)
+ * through to (but not including) the start of the next sub-block. The bold
+ * label is captured along with the prose so the embedded time range survives.
+ */
+const DAY_LABEL_RE = /^\*\*\s*Day Mode\b/i;
+const NIGHT_LABEL_RE = /^\*\*\s*Night Mode\b/i;
+
+interface DayNightSegments {
+  /** Lines before the first labelled block (verbatim, preserved on save). */
+  preamble: string[];
+  /** Day Mode block lines (label + prose), or null if absent. */
+  dayLines: string[] | null;
+  /** Night Mode block lines (label + prose), or null if absent. */
+  nightLines: string[] | null;
+  /** Order the two blocks appear in, so we can re-emit them faithfully. */
+  order: ('day' | 'night')[];
+}
+
+/**
+ * Segment a combined "Day/Night Mode" section's content into its Day block,
+ * Night block, and any surrounding lines. Each block runs from its bold label
+ * line up to (not including) the next block's label. Lines before the first
+ * label are preamble and are preserved verbatim — nothing in the section is
+ * discarded on save.
+ */
+function segmentDayNight(content: string): DayNightSegments {
+  const lines = content.split('\n');
+  const preamble: string[] = [];
+  let dayLines: string[] | null = null;
+  let nightLines: string[] | null = null;
+  const order: ('day' | 'night')[] = [];
+  let current: 'day' | 'night' | null = null;
+
+  for (const line of lines) {
+    if (DAY_LABEL_RE.test(line)) {
+      dayLines = [];
+      if (!order.includes('day')) order.push('day');
+      current = 'day';
+    } else if (NIGHT_LABEL_RE.test(line)) {
+      nightLines = [];
+      if (!order.includes('night')) order.push('night');
+      current = 'night';
+    }
+
+    if (current === 'day' && dayLines) dayLines.push(line);
+    else if (current === 'night' && nightLines) nightLines.push(line);
+    else preamble.push(line);
+  }
+
+  return { preamble, dayLines, nightLines, order };
+}
+
+/** Extract trimmed Day/Night field values from a combined section. */
+function splitDayNight(content: string): { dayMode: string; nightMode: string } {
+  const { dayLines, nightLines } = segmentDayNight(content);
+  return {
+    dayMode: dayLines ? dayLines.join('\n').trim() : '',
+    nightMode: nightLines ? nightLines.join('\n').trim() : '',
+  };
+}
 
 export function parseSoulMd(
   content: string,
@@ -229,7 +311,16 @@ export function parseSoulMd(
   };
 
   for (const section of parsed.sections) {
-    const key = SOUL_HEADINGS[section.heading.toLowerCase()];
+    const lower = section.heading.toLowerCase();
+
+    if (COMBINED_DAYNIGHT_HEADINGS.has(lower)) {
+      const { dayMode, nightMode } = splitDayNight(section.content);
+      if (dayMode) fields.dayMode = dayMode;
+      if (nightMode) fields.nightMode = nightMode;
+      continue;
+    }
+
+    const key = SOUL_HEADINGS[lower];
     if (key) {
       fields[key] = section.content.trim();
     }
@@ -238,16 +329,170 @@ export function parseSoulMd(
   return { fields, parsed };
 }
 
+/**
+ * Locate the existing section (case-insensitive) whose heading maps to the
+ * given canonical field, returning its heading text — so updates reuse the
+ * file's actual heading and never spawn a duplicate with a different label.
+ */
+function findSoulHeading(
+  parsed: ParsedMarkdown,
+  fieldKey: string,
+): string | undefined {
+  for (const s of parsed.sections) {
+    if (SOUL_HEADINGS[s.heading.toLowerCase()] === fieldKey) {
+      return s.heading;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Rebuild a combined Day/Night Mode section's content, substituting ONLY the
+ * Day and Night block bodies and preserving everything else — preamble, the
+ * block ordering, and the original separator whitespace — so an edit to one
+ * field never reflows untouched text or silently drops other content in the
+ * section.
+ */
+function rebuildDayNight(
+  dayMode: string,
+  nightMode: string,
+  originalContent: string,
+): string {
+  const seg = segmentDayNight(originalContent);
+  // Use the field values verbatim — an empty field means the operator cleared
+  // it and that block must disappear (no falling back to the old content).
+  const dayBlock = dayMode.trim();
+  const nightBlock = nightMode.trim();
+
+  // Preserve the original separator between the two blocks (blank line vs.
+  // none) by inspecting ONLY the whitespace immediately preceding the Night
+  // label — a blank paragraph elsewhere inside the Day block must not force a
+  // spaced layout. Line-anchored (multiline) search finds the label wherever
+  // it sits, not just at offset 0.
+  const nightIdx = originalContent.search(/^\*\*\s*Night Mode\b/im);
+  let separator = '\n\n';
+  if (nightIdx > 0) {
+    const before = originalContent.slice(0, nightIdx);
+    // A blank line directly above the Night label ⇒ spaced layout.
+    separator = /\n[ \t]*\n[ \t]*$/.test(before) ? '\n\n' : '\n';
+  }
+
+  // Canonical Day→Night order: emit Day first, then Night. (Templates always
+  // list Day before Night; canonicalizing keeps a consistent, predictable
+  // layout and means a newly-added block lands in the expected position.)
+  const emitted: string[] = [];
+  if (dayBlock) emitted.push(dayBlock);
+  if (nightBlock) emitted.push(nightBlock);
+
+  // Reattach any preamble lines verbatim. For a freshly-created section (no
+  // original content), open with a blank line to match the shipped template
+  // layout (## Day/Night Mode\n\n**Day Mode...). Otherwise replay the leading
+  // blank line only if the source had one.
+  const preamble = seg.preamble.join('\n');
+  const isFresh = originalContent === '';
+  const leading =
+    isFresh || (/^\n/.test(originalContent) && !preamble.trim()) ? '\n' : '';
+  const head = preamble.trim() ? preamble.replace(/\n+$/, '') + '\n\n' : leading;
+
+  return head + emitted.join(separator) + '\n';
+}
+
+// Default heading labels used only when a field has no existing section and
+// the user supplied content (genuinely new section, safe to append). Labels
+// match the template shape so a fresh section doesn't look foreign next to
+// the template's own headings (e.g. "Communication", not "Communication Style").
+const SOUL_DEFAULT_HEADINGS: Record<string, string> = {
+  autonomyRules: 'Autonomy Rules',
+  communicationStyle: 'Communication',
+  dayMode: 'Day Mode',
+  nightMode: 'Night Mode',
+  coreTruths: 'Core Truths',
+};
+
 export function serializeSoulMd(
   fields: SoulFields,
   original: ParsedMarkdown,
 ): string {
   let result = original;
-  for (const [fieldKey, heading] of Object.entries(SOUL_MAP)) {
-    if (fields[fieldKey] !== undefined) {
-      result = updateSection(result, heading, fields[fieldKey] + '\n');
+
+  // Is Day/Night carried as one combined section in the source file?
+  const combinedSection = original.sections.find((s) =>
+    COMBINED_DAYNIGHT_HEADINGS.has(s.heading.toLowerCase()),
+  );
+  const combinedHeading = combinedSection?.heading;
+  // What did the combined section originally yield, so we can detect whether
+  // the operator actually edited Day/Night and avoid reflowing untouched text
+  // (templates vary: blank line vs. no blank line between the bold sub-lines).
+  const originalDayNight = combinedSection
+    ? splitDayNight(combinedSection.content)
+    : { dayMode: '', nightMode: '' };
+
+  // Does the file carry explicit single-mode sections (## Day Mode / ## Night
+  // Mode)? If neither those nor a combined section exist, a fresh save should
+  // emit ONE canonical "## Day/Night Mode" section (template shape), not two
+  // orphan single-mode headings.
+  const hasExplicitDay = findSoulHeading(original, 'dayMode') !== undefined;
+  const hasExplicitNight = findSoulHeading(original, 'nightMode') !== undefined;
+  const useCanonicalCombined =
+    !combinedHeading && !hasExplicitDay && !hasExplicitNight;
+
+  for (const fieldKey of Object.keys(SOUL_DEFAULT_HEADINGS)) {
+    const value = fields[fieldKey];
+    if (value === undefined) continue;
+
+    // Day/Night fields fold back into the combined section when present, or
+    // into a freshly-created canonical combined section when the file has no
+    // day/night sections at all.
+    if (
+      (fieldKey === 'dayMode' || fieldKey === 'nightMode') &&
+      (combinedHeading || useCanonicalCombined)
+    ) {
+      // Handle the pair once, when processing dayMode; skip nightMode.
+      if (fieldKey === 'nightMode') continue;
+      const dayMode = fields.dayMode ?? '';
+      const nightMode = fields.nightMode ?? '';
+
+      if (combinedHeading) {
+        // Unchanged from the source: leave the section's raw text exactly
+        // as-is so differing template layouts round-trip losslessly.
+        if (
+          dayMode.trim() === originalDayNight.dayMode.trim() &&
+          nightMode.trim() === originalDayNight.nightMode.trim()
+        ) {
+          continue;
+        }
+        const newContent = rebuildDayNight(
+          dayMode,
+          nightMode,
+          combinedSection?.content ?? '',
+        );
+        result = updateSection(result, combinedHeading, newContent);
+      } else if (dayMode.trim() || nightMode.trim()) {
+        // Fresh file: append one canonical combined section.
+        const newContent = rebuildDayNight(dayMode, nightMode, '');
+        result = updateSection(result, 'Day/Night Mode', newContent);
+      }
+      continue;
     }
+
+    // Reuse the file's actual heading if a matching section exists; this is
+    // what stops "Communication" gaining an orphan "Communication Style".
+    const existing = findSoulHeading(result, fieldKey);
+    if (existing) {
+      // Skip rewriting sections the operator left untouched so the original
+      // raw text (and its exact whitespace) round-trips losslessly.
+      const existingSection = result.sections.find((s) => s.heading === existing);
+      if (existingSection && existingSection.content.trim() === value.trim()) {
+        continue;
+      }
+      result = updateSection(result, existing, value + '\n');
+    } else if (value.trim()) {
+      // No matching section and the user typed content: append a new one.
+      result = updateSection(result, SOUL_DEFAULT_HEADINGS[fieldKey], value + '\n');
+    }
+    // No matching section and empty value: do nothing (don't append blanks).
   }
+
   return serializeMarkdown(result);
 }
 

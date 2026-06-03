@@ -183,8 +183,13 @@ export function ProfileForm({
                 id="soul-daymode"
                 value={soul.dayMode}
                 onChange={(e) => updateSoul('dayMode', e.target.value)}
-                rows={2}
+                rows={3}
+                className="font-mono text-xs"
               />
+              <p className="text-xs text-muted-foreground">
+                Keep the bold <code>**Day Mode (start-end):**</code> label. It
+                carries the agent&apos;s active hours.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="soul-nightmode">Night Mode</Label>
@@ -192,8 +197,12 @@ export function ProfileForm({
                 id="soul-nightmode"
                 value={soul.nightMode}
                 onChange={(e) => updateSoul('nightMode', e.target.value)}
-                rows={2}
+                rows={3}
+                className="font-mono text-xs"
               />
+              <p className="text-xs text-muted-foreground">
+                Keep the bold <code>**Night Mode (...):**</code> label.
+              </p>
             </div>
           </div>
 
