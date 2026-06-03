@@ -27,21 +27,43 @@ export default function TasksPage() {
   const [view, setView] = useState<ViewMode>('kanban');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [completedToday, setCompletedToday] = useState<Task[]>([]);
+  const [registryAgents, setRegistryAgents] = useState<Array<{ name: string; org: string }>>([]);
   const [loading, setLoading] = useState(true);
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Derive unique values for filter dropdowns
+  // Derive unique values for filter dropdowns (task-derived: "filter among agents that have tasks")
   const allTasks = tasks;
   const agents = [...new Set(allTasks.map((t) => t.assignee).filter(Boolean) as string[])];
   const projects = [...new Set(allTasks.map((t) => t.project).filter(Boolean) as string[])];
   const orgs = [...new Set(allTasks.map((t) => t.org))];
 
+  // Org currently in scope for the Create Task dialog. Mirrors the org filter
+  // applied to the task list in fetchTasks so the assignee options match the
+  // org the new task will actually be created under.
+  const effectiveOrg = currentOrg !== 'all'
+    ? currentOrg
+    : (filters.org !== 'all' ? filters.org : '');
+
+  // Assignee options for the Create Task dialog come from the agent registry,
+  // so an agent can receive its first task before it has any. Scope the registry
+  // to the active org (when one is selected), then union with the task-derived
+  // assignees so legacy/human/task-only names are never dropped. The task-derived
+  // list also acts as a fallback if the registry fetch fails (never emptier than
+  // today).
+  const createTaskAgents = [
+    ...new Set([
+      ...registryAgents
+        .filter((a) => !effectiveOrg || a.org === effectiveOrg)
+        .map((a) => a.name),
+      ...agents,
+    ]),
+  ];
+
   const fetchTasks = useCallback(async () => {
     const params = new URLSearchParams();
-    const effectiveOrg = currentOrg !== 'all' ? currentOrg : (filters.org !== 'all' ? filters.org : '');
     if (effectiveOrg) params.set('org', effectiveOrg);
     if (filters.agent !== 'all') params.set('agent', filters.agent);
     if (filters.priority !== 'all') params.set('priority', filters.priority);
@@ -78,12 +100,39 @@ export default function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentOrg, filters]);
+  }, [effectiveOrg, filters]);
+
+  // Empty deps: the agent registry is global, not reactive to org/filter state.
+  // We fetch it once and filter client-side (see createTaskAgents) so switching
+  // orgs never needs a refetch.
+  const fetchRegistryAgents = useCallback(async () => {
+    try {
+      const res = await fetch('/api/agents');
+      if (res.ok) {
+        const data: Array<{ name?: string; org?: string }> = await res.json();
+        const seen = new Set<string>();
+        const registry: Array<{ name: string; org: string }> = [];
+        for (const a of data) {
+          if (a.name && !seen.has(a.name)) {
+            seen.add(a.name);
+            registry.push({ name: a.name, org: a.org ?? '' });
+          }
+        }
+        setRegistryAgents(registry);
+      }
+    } catch {
+      // Leave registryAgents empty; the dialog falls back to the task-derived list.
+    }
+  }, []);
 
   useEffect(() => {
     setLoading(true);
     fetchTasks();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    fetchRegistryAgents();
+  }, [fetchRegistryAgents]);
 
   function handleFilterChange(key: string, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -175,7 +224,7 @@ export default function TasksPage() {
             </Button>
           </div>
           <CreateTaskDialog
-            agents={agents}
+            agents={createTaskAgents}
             projects={projects}
             onCreated={fetchTasks}
           />
@@ -201,7 +250,7 @@ export default function TasksPage() {
             Create your first task to start tracking work across your agents.
           </p>
           <CreateTaskDialog
-            agents={agents}
+            agents={createTaskAgents}
             projects={projects}
             onCreated={fetchTasks}
           />
