@@ -300,8 +300,9 @@ class Clients:
     @property
     def genai(self):
         if self._genai is None:
-            from google import genai
-            self._genai = genai.Client(api_key=get_api_key(self.config))
+            # Route through get_genai_client() so the MMRAG_GEMINI_CLIENT_FACTORY
+            # injection seam (fault-injection tests, _test_clients/) keeps working.
+            self._genai = get_genai_client(get_api_key(self.config))
         return self._genai
 
     @property
@@ -1991,13 +1992,13 @@ def reindex_collection(chroma, client, config, name):
             orphan = chroma.get_collection(old_name)
         except Exception:
             raise RuntimeError(f"Collection '{name}' not found")
-        print(f"  {name}: recovering from interrupted reindex (restoring {old_name})")
+        print(f"  {name}: recovering from interrupted reindex (restoring {old_name})", file=sys.stderr)
         orphan.modify(name=name)
         src = orphan
 
     total = src.count()
     if total == 0:
-        print(f"  {name}: empty, skipping")
+        print(f"  {name}: empty, skipping", file=sys.stderr)
         return 0
 
     # Clean up any stale temp/old collections from a previously interrupted run.
@@ -2014,7 +2015,7 @@ def reindex_collection(chroma, client, config, name):
 
     provider = get_provider(config)
     print(f"  {name}: re-embedding {total} chunks → {provider} "
-          f"({active_embed_model(config)}, {active_embed_dimensions(config)}d)")
+          f"({active_embed_model(config)}, {active_embed_dimensions(config)}d)", file=sys.stderr)
 
     migrated = 0
     offset = 0
@@ -2031,7 +2032,7 @@ def reindex_collection(chroma, client, config, name):
         # embedding is not reproduced (no source bytes, no re-describe cost).
         media_count = sum(1 for m in metas if m.get("type") not in ("text", "pdf_page", "docx", "slides", "spreadsheet"))
         if media_count:
-            print(f"    note: {media_count} media chunk(s) re-embedded from text descriptions only")
+            print(f"    note: {media_count} media chunk(s) re-embedded from text descriptions only", file=sys.stderr)
 
         # Re-embed the stored chunk text under the new provider (batched)
         embeddings = embed_texts_batch(client, config, docs, task_type="RETRIEVAL_DOCUMENT")
@@ -2045,7 +2046,7 @@ def reindex_collection(chroma, client, config, name):
         dst.upsert(ids=ids, embeddings=embeddings, documents=docs, metadatas=metas)
         migrated += len(ids)
         offset += REINDEX_BATCH_SIZE
-        print(f"    {min(migrated, total)}/{total}")
+        print(f"    {min(migrated, total)}/{total}", file=sys.stderr)
 
     # Verify the rebuild is complete before touching the original
     rebuilt = dst.count()
@@ -2070,9 +2071,9 @@ def reindex_collection(chroma, client, config, name):
     try:
         chroma.delete_collection(old_name)
     except Exception:
-        print(f"  WARNING: could not delete old collection '{old_name}' — remove it manually")
+        print(f"  WARNING: could not delete old collection '{old_name}' — remove it manually", file=sys.stderr)
 
-    print(f"  {name}: done ({migrated} chunks)")
+    print(f"  {name}: done ({migrated} chunks)", file=sys.stderr)
     return migrated
 
 
@@ -2093,12 +2094,12 @@ def cmd_reindex(args):
                  if not n.endswith(REINDEX_TMP_SUFFIX) and not n.endswith(REINDEX_OLD_SUFFIX)]
 
     if not names:
-        print("No collections found to reindex.")
+        print("No collections found to reindex.", file=sys.stderr)
         return
 
     provider = get_provider(config)
     print(f"Reindexing {len(names)} collection(s) → provider={provider}, "
-          f"model={active_embed_model(config)}, dims={active_embed_dimensions(config)}")
+          f"model={active_embed_model(config)}, dims={active_embed_dimensions(config)}", file=sys.stderr)
 
     summary = {"provider": provider, "model": active_embed_model(config),
                "dimensions": active_embed_dimensions(config), "collections": {}}
@@ -2109,7 +2110,7 @@ def cmd_reindex(args):
                 count = reindex_collection(chroma, client, config, name)
                 summary["collections"][name] = count
             except Exception as e:
-                print(f"  ERROR reindexing {name}: {e}")
+                print(f"  ERROR reindexing {name}: {e}", file=sys.stderr)
                 summary["collections"][name] = f"ERROR: {e}"
                 errors += 1
     finally:
