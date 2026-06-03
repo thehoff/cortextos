@@ -381,6 +381,27 @@ Private collection details.
         self.assertIn("Keep the user organised.", chunks[0])
 
 
+class TestHybridRetrieval(unittest.TestCase):
+    def test_rrf_fusion_rewards_presence_in_both_lists(self):
+        """A doc ranked in both lists must outrank a doc that tops only one list."""
+        dense = ["a", "b", "c", "d"]
+        bm25 = ["e", "b", "c", "f"]
+        fused = mmrag._rrf_fuse([dense, bm25])
+        # 'b' (rank 2+2) and 'c' (rank 3+3) appear in both — they beat 'e' (rank 1, one list)
+        self.assertEqual(fused[0], "b")
+        self.assertLess(fused.index("c"), fused.index("e"))
+
+    def test_rrf_single_list_preserves_order(self):
+        self.assertEqual(mmrag._rrf_fuse([["x", "y", "z"]]), ["x", "y", "z"])
+
+    def test_rrf_empty_lists(self):
+        self.assertEqual(mmrag._rrf_fuse([[], []]), [])
+
+    def test_bm25_tokenize(self):
+        self.assertEqual(mmrag._bm25_tokenize("Run kb-query --org Personas!"),
+                         ["run", "kb", "query", "org", "personas"])
+
+
 class TestCoherePostRetry(unittest.TestCase):
     def _http_error(self, code):
         import urllib.error

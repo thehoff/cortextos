@@ -78,6 +78,9 @@ DEFAULT_RERANK_TOP_N = 5
 DEFAULT_RERANK_CANDIDATE_POOL = 30
 DEFAULT_RERANK_THRESHOLD = 0.1  # rerank relevance scores have a different scale than cosine
 
+# Hybrid retrieval (BM25 + dense + reciprocal rank fusion)
+RRF_K = 60  # standard RRF constant
+
 # Pricing (per 1M tokens unless noted)
 EMBEDDING_PRICE_PER_M = 0.20
 FLASH_INPUT_PRICE_PER_M = 0.15
@@ -440,6 +443,25 @@ def cohere_chat_text(clients, config, prompt, image_data_url=None, vision=False)
     if not text.strip():
         raise RuntimeError(f"Cohere chat ({model}) returned an empty response")
     return text
+
+
+def _bm25_tokenize(text):
+    """Lowercase alphanumeric tokens for BM25 (same tokenizer as the rerank benches)."""
+    import re
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _rrf_fuse(rank_lists, k=RRF_K):
+    """Reciprocal rank fusion: combine multiple ranked id lists into one.
+
+    score(d) = sum over lists of 1/(k + rank). Documents absent from a list
+    contribute nothing for that list. Returns ids sorted by fused score.
+    """
+    scores = {}
+    for ranking in rank_lists:
+        for pos, doc_id in enumerate(ranking):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + pos + 1)
+    return sorted(scores, key=lambda d: -scores[d])
 
 
 def cohere_rerank(clients, config, query, documents, top_n):
@@ -1780,6 +1802,50 @@ def cmd_query(args):
                     "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
                 })
 
+    # Hybrid retrieval (BM25 + dense + RRF): fuse lexical and semantic recall so
+    # exact-term matches (command names, identifiers) survive even when the
+    # embedding misses them. Active only alongside rerank (the reranker produces
+    # the final relevance scores for the fused pool) and without a type filter
+    # (BM25 ranks the whole collection; it cannot honour a metadata filter).
+    use_hybrid = (use_rerank
+                  and not getattr(args, "no_hybrid", False)
+                  and config.get("hybrid_retrieval", True)
+                  and where_filter is None)
+    hybrid_used = False
+    if use_hybrid and filtered:
+        try:
+            from rank_bm25 import BM25Okapi
+            all_data = collection.get(include=["documents", "metadatas"])
+            all_ids = all_data["ids"]
+            all_docs = all_data["documents"]
+            bm25 = BM25Okapi([_bm25_tokenize(d) for d in all_docs])
+            scores = bm25.get_scores(_bm25_tokenize(args.question))
+            bm25_order = sorted(range(len(all_ids)), key=lambda i: -scores[i])[:fetch_k]
+            bm25_ids = [all_ids[i] for i in bm25_order if scores[i] > 0]
+
+            dense_ids = [r["id"] for r in filtered]
+            fused_ids = _rrf_fuse([dense_ids, bm25_ids])[:fetch_k]
+
+            # Rebuild the candidate pool in fused order; BM25-only hits get their
+            # content from the collection dump and a 0.0 cosine placeholder (the
+            # reranker scores them properly in the next stage).
+            by_id = {r["id"]: r for r in filtered}
+            lookup = {all_ids[i]: (all_docs[i], all_data["metadatas"][i]) for i in bm25_order}
+            fused = []
+            for did in fused_ids:
+                if did in by_id:
+                    fused.append(by_id[did])
+                elif did in lookup:
+                    doc, meta = lookup[did]
+                    fused.append({"id": did, "content": doc, "similarity": 0.0, "metadata": meta})
+            filtered = fused
+            hybrid_used = True
+        except ImportError:
+            print("WARNING: hybrid_retrieval enabled but rank_bm25 not installed — dense-only recall",
+                  file=sys.stderr)
+        except Exception as e:
+            print(f"WARNING: hybrid retrieval failed ({e}) — dense-only recall", file=sys.stderr)
+
     # Deduplicate near-identical results (same file in multiple lesson folders)
     filtered = deduplicate_results(filtered)
 
@@ -1839,6 +1905,7 @@ def cmd_query(args):
             "result_count": len(filtered),
             "source_files": source_files,
             "reranked": reranked,
+            "hybrid": hybrid_used,
             "provider": get_provider(config),
             "results": [],
         }
@@ -2300,6 +2367,8 @@ def main():
     p_query.add_argument("--full", "-f", action="store_true", help="Show full content (not truncated)")
     p_query.add_argument("--no-rerank", dest="no_rerank", action="store_true",
                          help="Disable the rerank stage (A/B comparison / fallback)")
+    p_query.add_argument("--no-hybrid", dest="no_hybrid", action="store_true",
+                         help="Disable hybrid BM25+RRF recall (dense-only candidate pool)")
 
     # reindex (provider migration)
     p_reindex = sub.add_parser("reindex",
